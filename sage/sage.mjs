@@ -159,7 +159,10 @@ const LAMP = [25.5, -25.5];
 export const MARKS = (() => {
   const head = k.iso([SAGE[0], SAGE[1], MAT_TOP + TORSO_Z + TORSO_H + 3.4 * U + 7.8], P);
   const nose = k.iso([0, ORCA_L + Y_TAIL + 4, -6], P);
-  return { headX: head[0] / VIEW, headY: head[1] / VIEW, labelX: nose[0] / VIEW, labelY: nose[1] / VIEW };
+  // the orca's heading on screen (unit vector, SVG axes: y down), for Floe's swim animation
+  const o = k.iso([0, 0, 0], P), f = k.iso([0, 10, 0], P);
+  const len = Math.hypot(f[0] - o[0], f[1] - o[1]);
+  return { headX: head[0] / VIEW, headY: head[1] / VIEW, labelX: nose[0] / VIEW, labelY: nose[1] / VIEW, headingX: (f[0] - o[0]) / len, headingY: (f[1] - o[1]) / len };
 })();
 
 // ---------------------------------------------------------------- frame

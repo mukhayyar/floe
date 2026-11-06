@@ -13,7 +13,9 @@ struct SceneLayout: Decodable {
         let size: Double, anchorX: Double, anchorY: Double
         // where the badge (by the sage's head) and the name (by the orca's nose) go, as sprite fractions
         let headX: Double?, headY: Double?, labelX: Double?, labelY: Double?
+        let headingX: Double?, headingY: Double?
     }
+    struct Lagoon: Decodable { let x: Double; let y: Double; let rx: Double; let ry: Double }
     struct Pond: Decodable { let x: Double; let y: Double; let rx: Double }
     struct Light: Decodable { let x: Double; let y: Double; let r: Double; let color: String }
     struct Seat: Decodable { let x: Double; let y: Double; let depth: Double }
@@ -26,6 +28,7 @@ struct SceneLayout: Decodable {
     let sea: Sea
     let seats: [String: [Seat]]
     let scale: [String: Double]?
+    let lagoon: Lagoon?
 }
 
 @MainActor
@@ -185,7 +188,9 @@ struct FloeSeat: View {
         let labelAt = CGPoint(x: size * (marks?.labelX ?? 0.5), y: size * min(0.97, (marks?.labelY ?? (anchorY + 0.27)) + 0.04))
         ZStack {
             if layer != .labels {
-                SageAvatar(seed: host.id, kind: host.kind, name: host.name, mood: mood, orbits: host.counts.working)
+                SageAvatar(seed: host.id, kind: host.kind, name: host.name, mood: mood, orbits: host.counts.working,
+                           pivot: CGPoint(x: marks?.anchorX ?? 0.398, y: marks?.anchorY ?? 0.59),
+                           heading: CGVector(dx: marks?.headingX ?? -0.842, dy: marks?.headingY ?? 0.539))
             }
             if layer != .sprite { labels(badgeAt: badgeAt, labelAt: labelAt) }
         }
@@ -314,6 +319,49 @@ final class SceneLifeView: NSView {
             flies.emitterCells = [cell]
             root.addSublayer(flies)
 
+            // moonlit glints drifting across the lagoon and the open sea: the water is moving
+            let glint = CAEmitterCell()
+            glint.contents = Self.glint
+            glint.birthRate = 7
+            glint.lifetime = 5
+            glint.lifetimeRange = 2
+            glint.velocity = 5
+            glint.velocityRange = 3
+            glint.emissionLongitude = 0
+            glint.emissionRange = 0.25
+            glint.scale = 0.5
+            glint.scaleRange = 0.25
+            glint.alphaRange = 0.3
+            glint.alphaSpeed = -0.1
+            glint.color = NSColor(red: 0.72, green: 0.84, blue: 1, alpha: 0.55).cgColor
+            if let lag = layout.lagoon {
+                let c = fit.point(lag.x, lag.y), rx = fit.length(lag.rx) * 0.86, ry = lag.ry * layout.height * fit.scale * 0.8
+                let water = CAEmitterLayer()
+                water.frame = CGRect(x: c.x - rx, y: c.y - rx, width: rx * 2, height: rx * 2)
+                water.emitterShape = .circle
+                water.emitterMode = .surface
+                water.emitterPosition = CGPoint(x: rx, y: rx)
+                water.emitterSize = CGSize(width: rx * 2, height: rx * 2)
+                water.renderMode = .additive
+                water.emitterCells = [glint]
+                water.setAffineTransform(CGAffineTransform(scaleX: 1, y: ry / rx))   // a circle squashed to the lagoon's ellipse
+                root.addSublayer(water)
+            }
+            let seaTop = fit.point(0, layout.sea.top).y
+            if seaTop < size.height - 6 {
+                let sea = CAEmitterLayer()
+                sea.frame = CGRect(x: 0, y: seaTop, width: size.width, height: size.height - seaTop)
+                sea.emitterShape = .rectangle
+                sea.emitterMode = .surface
+                sea.emitterPosition = CGPoint(x: size.width / 2, y: (size.height - seaTop) / 2)
+                sea.emitterSize = sea.bounds.size
+                sea.renderMode = .additive
+                let far = glint.copy() as! CAEmitterCell
+                far.birthRate = 4
+                sea.emitterCells = [far]
+                root.addSublayer(sea)
+            }
+
             // a mother orca and her calf, passing left to right in the open sea, now and then
             let seaY = fit.point(0, (layout.sea.top + layout.sea.bottom) / 2).y
             for (i, scale) in [1.0, 0.62].enumerated() {
@@ -349,6 +397,17 @@ final class SceneLifeView: NSView {
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
               let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [CGColor(gray: 1, alpha: 1), CGColor(gray: 1, alpha: 0)] as CFArray, locations: [0, 1]) else { return nil }
         ctx.drawRadialGradient(g, startCenter: CGPoint(x: 12, y: 12), startRadius: 0, endCenter: CGPoint(x: 12, y: 12), endRadius: 12, options: [])
+        return ctx.makeImage()
+    }()
+
+    /// A short horizontal glint of moonlight on the water, soft at both ends.
+    private static let glint: CGImage? = {
+        let w = 20, h = 4
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [CGColor(gray: 1, alpha: 0), CGColor(gray: 1, alpha: 1), CGColor(gray: 1, alpha: 0)] as CFArray, locations: [0, 0.5, 1]) else { return nil }
+        ctx.clip(to: CGRect(x: 0, y: 1, width: w, height: 2))
+        ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: 2), end: CGPoint(x: w, y: 2), options: [])
         return ctx.makeImage()
     }()
 

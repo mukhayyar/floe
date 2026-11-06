@@ -260,6 +260,13 @@ export function sceneSvg() {
     scale: Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i + 1, i + 1 >= 6 ? 0.7 : i + 1 >= 4 ? 0.8 : 1])),
     pond: { x: at([0, -150, SEA])[0] / W, y: at([0, -150, SEA])[1] / H, rx: (40 * P.scale) / W },
     lights: lights.map((l) => ({ x: l.at[0] / W, y: l.at[1] / H, r: l.r / W, color: l.color })),
+    // the lagoon's water on screen (an ellipse's centre and radii), for drifting glints
+    lagoon: (() => {
+      const pts = FLOE.map(([x, y]) => at([x * LAGOON, y * LAGOON, SEA]));
+      const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      return { x: cx / W, y: cy / H, rx: (Math.max(...xs) - Math.min(...xs)) / 2 / W, ry: (Math.max(...ys) - Math.min(...ys)) / 2 / H };
+    })(),
     // open sea in front of the floe, where the orca fins swim (fractions of the picture)
     sea: (() => { const lowest = Math.max(...FLOE.map(([x, y]) => at([x, y, SEA])[1])); return { top: Math.min(0.97, (lowest + 6) / H), bottom: 1 }; })(),
     seats: Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i + 1, seatsFor(i + 1)])),

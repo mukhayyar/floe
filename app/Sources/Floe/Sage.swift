@@ -99,17 +99,27 @@ struct SageAvatar: NSViewRepresentable {
     var name: String = ""
     let mood: Mood
     var orbits: Int = 0
+    /// Where the orca meets the sea in the sprite (its rocking pivot), and which way it faces on
+    /// screen (SVG axes), so it can ride the swell; the defaults match the current sprites.
+    var pivot = CGPoint(x: 0.398, y: 0.59)
+    var heading = CGVector(dx: -0.842, dy: 0.539)
 
     func makeNSView(context: Context) -> SageNSView { SageNSView() }
 
     func updateNSView(_ view: SageNSView, context: Context) {
+        view.setMotion(pivot: pivot, heading: heading)
         view.configure(id: seed, mood: mood)
     }
 }
 
 final class SageNSView: NSView {
     private let glow = CAGradientLayer()
+    /// Carries the sprite; it bobs, rocks and surges on the swell (Core Animation, no app CPU).
+    private let swell = CALayer()
     private let sage = CALayer()
+    private var pivot = CGPoint(x: 0.398, y: 0.59)
+    private var heading = CGVector(dx: -0.842, dy: 0.539)
+    private var swimming = ""
     private var id = ""
     private var mood: Mood = .idle
     private var sheet: SageSheets.Sheet?
@@ -137,7 +147,8 @@ final class SageNSView: NSView {
         sage.magnificationFilter = .trilinear
         sage.minificationFilter = .trilinear
         layer?.addSublayer(glow)
-        layer?.addSublayer(sage)
+        swell.addSublayer(sage)
+        layer?.addSublayer(swell)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -148,14 +159,66 @@ final class SageNSView: NSView {
         CATransaction.setDisableActions(true)
         let b = bounds
         glow.frame = CGRect(x: b.minX - b.width * 0.05, y: b.minY - b.height * 0.02, width: b.width * 1.1, height: b.height * 0.62)
-        sage.frame = b
+        // pivot at the waterline under the orca (sprite fractions are y-down; layers are y-up)
+        swell.anchorPoint = CGPoint(x: pivot.x, y: 1 - pivot.y)
+        swell.bounds = CGRect(origin: .zero, size: b.size)
+        swell.position = CGPoint(x: b.minX + pivot.x * b.width, y: b.minY + (1 - pivot.y) * b.height)
+        sage.frame = swell.bounds
         CATransaction.commit()
+        swim()
+    }
+
+    func setMotion(pivot: CGPoint, heading: CGVector) {
+        guard pivot != self.pivot || heading != self.heading else { return }
+        self.pivot = pivot
+        self.heading = heading
+        swimming = ""
+        needsLayout = true
+    }
+
+    /// Riding the swell: a bob, a gentle rock about the waterline, and a surge back and forth
+    /// along the orca's heading. Livelier while agents work, choppy when one needs you, nearly
+    /// still when the host is offline. Each host keeps its own phase so the pod isn't in step.
+    private func swim() {
+        guard window != nil, bounds.width > 4 else { return }
+        let key = "\(id)|\(mood)|\(Int(bounds.width))"
+        guard key != swimming else { return }
+        swimming = key
+        swell.removeAllAnimations()
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let s = bounds.width
+        let m: (bob: CGFloat, bobT: Double, rock: CGFloat, rockT: Double, surge: CGFloat, surgeT: Double)
+        switch mood {
+        case .working, .thinking: m = (0.016, 2.4, 1.8, 3.6, 0.034, 5.2)
+        case .attention: m = (0.02, 1.7, 2.4, 2.6, 0.018, 4.0)
+        case .offline: m = (0.007, 5.0, 0.7, 7.0, 0.006, 11)
+        default: m = (0.012, 3.4, 1.3, 4.6, 0.02, 8.0)
+        }
+        let phase = Double(fnv(id) % 997) / 997
+        func wave(_ path: String, _ amp: CGFloat, _ period: Double, _ offset: Double) -> CABasicAnimation {
+            let a = CABasicAnimation(keyPath: path)
+            a.fromValue = -amp
+            a.toValue = amp
+            a.duration = period / 2
+            a.autoreverses = true
+            a.repeatCount = .infinity
+            a.isAdditive = true
+            a.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            a.timeOffset = (offset.truncatingRemainder(dividingBy: 1)) * period
+            return a
+        }
+        swell.add(wave("transform.translation.y", m.bob * s, m.bobT, phase), forKey: "bob")
+        swell.add(wave("transform.rotation.z", m.rock * .pi / 180, m.rockT, phase + 0.31), forKey: "rock")
+        swell.add(wave("transform.translation.x", m.surge * s * heading.dx, m.surgeT, phase + 0.57), forKey: "surgeX")
+        swell.add(wave("transform.translation.y", -m.surge * s * heading.dy, m.surgeT, phase + 0.57), forKey: "surgeY")
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         playing = ""
+        swimming = ""
         play()
+        swim()
     }
 
     func configure(id: String, mood: Mood) {
@@ -177,6 +240,7 @@ final class SageNSView: NSView {
         }
         tint()
         play()
+        swim()
     }
 
     private var state: String {

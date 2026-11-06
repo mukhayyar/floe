@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/mukhayyar/floe/main/install.sh | ba
 | | |
 |---|---|
 | <img src="docs/live.png" width="300" alt="Live tab"> | **Live.** Agents that need you come first, then working, then recently finished. Each one shows its tool calls as a timeline that draws itself step by step. When an agent asks a question or wants permission, its options are buttons: tap one, or type an answer. |
-| <img src="docs/hosts.png" width="300" alt="Hosts tab"> | **Hosts.** Every Orca host is a karakuri sage riding an orca in a lagoon inside a ring of ice. While its agents work, the orca swims, beating its flukes and leaving a wake, and the sage writes on its scroll (or types, on this Mac). When one needs you, the orca spouts and the sage strikes its singing bowl. When the host is offline, the orca drifts with its eye shut and the lantern goes out. |
+| <img src="docs/hosts.png" width="300" alt="Hosts tab"> | **Hosts.** Every Orca host is a karakuri sage riding an orca in a lagoon inside a ring of ice. The pod rides the swell: each orca bobs, rocks and surges through the water at its own pace, and moonlight glints drift across the lagoon. While its agents work, the orca swims harder, beating its flukes and leaving a wake, and the sage writes on its scroll (or types, on this Mac). When one needs you, the water turns choppy, the orca spouts and the sage strikes its singing bowl. When the host is offline, the orca drifts almost still with its eye shut and the lantern goes out. |
 | <img src="docs/host.png" width="300" alt="A host"> | **Drill down.** Tap a sage, then a project, then a worktree: its agents and terminals (the main terminal is marked). Peek at a terminal, type into it, message an agent, start Claude or Codex, or jump to it in Orca. |
 | <img src="docs/project.png" width="300" alt="A project"> | **Ask Orca.** The Ask tab is a headless Claude Code session that can read your repos and drive Orca through its CLI, on any host. Pick a worktree and its pill sits above the input, so you know where a message goes. |
 
@@ -61,8 +61,11 @@ riding an orca. The host is part of Orca, so its sage rides one.
   the orca's markings and the characters it writes. Floe picks them so no two hosts look alike.
 - **Name plate:** the host's initials are on a brass plate at the front of the board.
 
-The proxy renders each sage once per host as a sprite sheet. Floe plays it with Core Animation, so
-it costs the app nothing per frame.
+The proxy renders each sage once per host as a sprite sheet. Floe plays it with Core Animation and
+layers the ocean on top: each rider bobs, rocks about its waterline and surges along its heading,
+harder while agents work and nearly still when the host is offline. Each host keeps its own phase,
+so the pod never moves in step. Glints drift across the lagoon and the open sea, and orca fins pass
+now and then. All of it runs in Core Animation, so it costs the app nothing per frame.
 
 ### Built for games
 
@@ -128,7 +131,7 @@ Floe.app (Swift, AppKit + SwiftUI)  ──HTTP/SSE──▶  proxy (Bun, 127.0.0
     (`--audit`, every state).
 - `app/Sources/Floe/` is the overlay:
   - `IslandWindow`: the panel, dragging, focus and the cursor.
-  - `Gathering` and `Sage`: the lagoon and the sprite players.
+  - `Gathering` and `Sage`: the lagoon, the sprite players and the swell (bob, rock, surge, glints).
   - `HostsView`: the drill-down.
   - `Timeline`: the tool steps.
   - `AgentViews` and `ChatViews`.
