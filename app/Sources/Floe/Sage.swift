@@ -166,6 +166,7 @@ final class SageNSView: NSView {
             sheet = nil
             playing = ""
             sage.removeAllAnimations()
+            sage.contentsGravity = .center      // the loading glyph stays small, whatever the seat size
             sage.contents = Self.placeholder
             SageSheets.shared.sheet(id) { [weak self] s in
                 guard let self, self.id == id else { return }
@@ -224,6 +225,7 @@ final class SageNSView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         sage.contentsScale = window?.backingScaleFactor ?? 2
+        sage.contentsGravity = .resizeAspect
         sage.contents = loop.frames.first
         CATransaction.commit()
         sage.removeAnimation(forKey: "frames")
