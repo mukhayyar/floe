@@ -1,8 +1,8 @@
-// The sages' courtyard on an ice floe: the backdrop of Floe's Hosts tab, in the same camera as
-// the sages, so each host's automaton stands on the deck at true scale. (An orca's favourite
-// place is the floe.) A floating slab of layered ice in a moonlit sea carries a cedar deck
-// around a stone-rimmed koi pond, a vermilion torii with two paper lanterns, a snowy pine
-// and a red maple, and stone lanterns. Floe animates orca fins in the sea in front of it.
+// The sages' lagoon: the backdrop of Floe's Hosts tab, in the same camera as the sages, so each
+// host's orca rider swims in it at true scale. (An orca's favourite place is the floe.) A ring
+// of layered ice floats in a moonlit sea around a calm lagoon; on the ring stand a vermilion
+// torii with two paper lanterns, a snowy pine, a red maple and stone lanterns. The riders swim
+// in the lagoon, and Floe animates orca fins in the open sea beyond.
 //
 // sceneSvg() returns the picture and a layout for the app: where each seat is (for 1..10
 // hosts), how big a sage sprite is and where its origin sits, and where the pond and the
@@ -13,7 +13,7 @@ import * as G from "./kit/lathe.mjs";
 import * as A from "./kit/audit.mjs";
 import { tubePieces, tubeSvg } from "./kit/tube.mjs";
 import { material } from "./palette.mjs";
-import { PROJECTION as SAGE_P, VIEW as SAGE_VIEW } from "./sage.mjs";
+import { PROJECTION as SAGE_P, VIEW as SAGE_VIEW, MARKS } from "./sage.mjs";
 
 export const W = 470, H = 460;
 const TAU = Math.PI * 2;
@@ -24,9 +24,12 @@ const GROUND = -DECK_H;               // the floe's snowy top
 const SEA = GROUND - 15;              // waterline on the floe's sides
 const FLOE_RX = 300, FLOE_RY = 262;
 const POND = [0, 0], POND_R = 54;
-const TORII = [-232, -178];
-const PINE = [-232, 110];
-const MAPLE = [92, -222];
+// the lagoon: the floe's inner edge, a ring of ice ~60 wide all round
+const LAGOON = 0.74;
+const onRing = (deg, f = 0.87) => { const a = (deg * Math.PI) / 180; return [FLOE_RX * f * Math.cos(a), FLOE_RY * f * Math.sin(a)]; };
+const TORII = onRing(-142, 0.86);
+const PINE = onRing(132, 0.88);
+const MAPLE = onRing(-62, 0.88);
 const FLOE = Array.from({ length: 30 }, (_, i) => {
   const a = (i / 30) * Math.PI * 2;
   const wob = 1 + 0.045 * Math.sin(a * 5 + 1.3) + 0.03 * Math.sin(a * 9 + 0.4);
@@ -116,31 +119,36 @@ export function sceneSvg() {
   back.push(wear(M.snow, L(k.onTop(FLOE.map(([x, y]) => [x * 0.95, y * 0.95]), GROUND, P, true), { tone: "faint" })));
   rec(A.extruded(FLOE, SEA, GROUND - SEA, { name: "stand.floe" }));
 
-  // ---- deck on the floe, planks, steps down to the snow
-  let planks = "";
-  for (let y = DECK.y + 16; y < DECK.y + DECK.d - 8; y += 16) planks += k.lineOnTop([DECK.x + 4, y], [DECK.x + DECK.w - 4, y], 0, P);
-  const nails = [];
-  for (let y = DECK.y + 8; y < DECK.y + DECK.d; y += 16) for (const x of [DECK.x + 12, DECK.x + DECK.w - 12]) nails.push(at([x, y, 0]));
-  put("deck", [0, 0, -DECK_H / 2], wear(M.deck, S(k.slabOf(DECK, -DECK_H, DECK_H, P, 4, 1.2), { tone: "mid", inner: L(k.sideSeam(DECK, -4, P, 4), { tone: "faint" }) }) + L(planks, { tone: "lo" }) + D(nails, { size: 0.6 })),
-    [rec(A.slab(DECK, -DECK_H, DECK_H, { name: "deck" }, 4))], -30);
-  for (let i = 0; i < 2; i++) {
-    const step = { x: DECK.x + DECK.w + i * 9, y: -36, w: 9, d: 72, r: 1 };
-    const h = DECK_H * (1 - (i + 1) / 3);
-    put(`step${i}`, [step.x + 4.5, 0, GROUND + h / 2], wear(M.beam, S(k.slabOf(step, GROUND, h, P, 2, 0.6), { tone: "mid" })), [rec(A.slab(step, GROUND, h, { name: `step${i}` }, 2))], -29);
+  // ---- the lagoon: the floe's inner cliff (the far side faces us) and the calm water inside
+  const inner = FLOE.map(([x, y], i) => { const wob = 1 + 0.03 * Math.sin(i * 1.7); return [x * LAGOON * wob, y * LAGOON * wob]; });
+  const VIEWER = [Math.cos((52 * Math.PI) / 180), Math.sin((52 * Math.PI) / 180)];
+  let walls = "";
+  for (let i = 0; i < inner.length; i++) {
+    const a = inner[i], b = inner[(i + 1) % inner.length];
+    const n = [-(b[1] - a[1]), b[0] - a[0]];          // inward normal for a counter-clockwise ring
+    const len = Math.hypot(n[0], n[1]) || 1;
+    const face = (n[0] * VIEWER[0] + n[1] * VIEWER[1]) / len;
+    if (face <= 0) continue;                           // only the far side of the cliff faces us
+    const tone = face > 0.75 ? 3 : face > 0.5 ? 2 : face > 0.25 ? 1 : 0;
+    walls += `<path class="iso-shade" data-shade="${tone}" d="${path3([[a[0], a[1], GROUND], [b[0], b[1], GROUND], [b[0], b[1], SEA], [a[0], a[1], SEA]], true)}"/>`;
   }
-  // ---- the pond: a stone rim around dark water with a few rings and koi
-  const FP = zUp([POND[0], POND[1], 0]);
-  const rim = G.ringBand(0, 3.2, POND_R, POND_R + 9, FP, P, { steps: 96 });
-  const water = `<path d="${G.circleOf(FP, 1.4, POND_R, P)}" style="fill:var(--anatomy-shade-1)"/><path d="${G.circleOf(FP, 1.4, POND_R * 0.86, P)}" fill="url(#pondlight)"/>` +
-    L([0.3, 0.55, 0.78].map((f) => G.circleOf(FP, 1.4, POND_R * f, P)).join(""), { tone: "lo" });
-  const koi = [[18, -14, 0.6, "#e8743b"], [-22, 16, 2.4, "#f1efe6"], [-6, -26, 4.2, "#e8743b"]].map(([x, y, a, c]) => {
-    const pts = [0, 1, 2, 3, 4].map((i) => [x + Math.cos(a) * (i * 2.4 - 5), y + Math.sin(a) * (i * 2.4 - 5), 1.5]);
-    return `<path d="${path3(pts)}" stroke="${c}" stroke-width="${2.6}" stroke-linecap="round" fill="none" opacity="0.9"/>`;
-  }).join("");
-  put("pond", [0, 0, 1.6], wear(M.stone, S(rim, { tone: "mid" }) + D(G.dotsOf(FP, 3.2, POND_R + 4.5, 28, P, { all: true }), { size: 0.6 })) +
-    wear(M.water, `<path d="${G.circleOf(FP, 3.2, POND_R, P)}" style="fill:var(--anatomy-shade-1)"/>` + water + koi) +
-    wear(M.stone, L(G.circleOf(FP, 3.2, POND_R, P), { tone: "lo" })),
-    [rec(A.ring(FP, 0, 3.2, POND_R, POND_R + 9, { name: "pond" }))], -20);
+  const lag = inner.map(([x, y]) => [x, y, SEA]);
+  const strataIn = [-4, -8.5, -12].map((dz) => k.pathOf(inner.map(([x, y]) => at([x, y, GROUND + dz])), true)).join("");
+  back.push(`<defs><radialGradient id="lagoon" cx="0.45" cy="0.45" r="0.6"><stop offset="0" stop-color="#22355f"/><stop offset="1" stop-color="#16244a"/></radialGradient></defs>`);
+  back.push(wear(M.ice, `<g>${walls}</g>` + `<path d="${strataIn}" fill="none" stroke="var(--anatomy-lo)" stroke-width="0.6" opacity="0.7"/>`));
+  back.push(`<path d="${path3(lag, true)}" fill="url(#lagoon)"/>`);
+  // the moon's path on the lagoon, and a few slow swells
+  const qq = rng(23);
+  let glint = "";
+  for (let i = 0; i < 26; i++) {
+    const u = qq(), v = qq();
+    const p0 = at([-120 + 240 * u, -150 + 260 * v, SEA]);
+    const w = 5 + qq() * 14;
+    glint += `<rect x="${(p0[0] - w / 2).toFixed(1)}" y="${p0[1].toFixed(1)}" width="${w.toFixed(1)}" height="0.8" rx="0.4" fill="#7f9ccc" opacity="${(0.12 + qq() * 0.2).toFixed(2)}"/>`;
+  }
+  back.push(`<clipPath id="lagclip"><path d="${path3(lag, true)}"/></clipPath><g clip-path="url(#lagclip)">${glint}</g>`);
+  back.push(wear(M.snow, L(k.pathOf(inner.map(([x, y]) => at([x, y, SEA + 1])), true), { tone: "hi" })));   // foam at the foot of the cliff
+  back.push(wear(M.snow, L(k.pathOf(inner.map(([x, y]) => at([x, y, GROUND])), true), { tone: "faint" })));  // the cliff's lip
 
   // ---- torii: two posts, the nuki tie beam and the kasagi on top, facing the viewer
   const across = G.unit3([-Math.sin((52 * Math.PI) / 180), Math.cos((52 * Math.PI) / 180), 0]);
@@ -214,8 +222,8 @@ export function sceneSvg() {
     put("toro.tip", tip, wear(M.stone, S(G.sphereOf(tip, 2.2, P, { steps: 24 }), { tone: "mid" })), [rec(A.ball(tip, 2.2, { name: "toro.tip" }))], 0.2);
     lights.push({ at: at([x, y, (z0 + z1) / 2]), r: 22, color: "#ffc978" });
   };
-  toro(-236, 160);
-  toro(178, -182);
+  toro(...onRing(168, 0.87));
+  toro(...onRing(-104, 0.87));
 
   A.settle(R, P);
   R.items.sort((a, b) => a.key - b.key);
@@ -229,36 +237,28 @@ export function sceneSvg() {
   // seats on an ellipse stretched across the screen (wide left-right, shallow front-back),
   // turned so no seat hides the pond, and kept on the deck
   const ACROSS = [-Math.sin(front), Math.cos(front)], TOWARD = [Math.cos(front), Math.sin(front)];
+  // riders in the lagoon: a row across it (two rows for a crowd), staggered a little front-back
   const place = (u, v) => {
-    const x = Math.max(DECK.x + 46, Math.min(DECK.x + DECK.w - 46, POND[0] + u * ACROSS[0] + v * TOWARD[0]));
-    const y = Math.max(DECK.y + 46, Math.min(DECK.y + DECK.d - 46, POND[1] + u * ACROSS[1] + v * TOWARD[1]));
-    const w = [x, y, 5];
+    const w = [u * ACROSS[0] + v * TOWARD[0], u * ACROSS[1] + v * TOWARD[1], SEA];
     const s = at(w);
     return { x: s[0] / W, y: s[1] / H, depth: k.depthOf(w, P) };
   };
   const seatsFor = (n) => {
-    if (n <= 3) {
-      // round the pond: left, behind, right (one or two: beside it)
-      const angles = n === 1 ? [0.55] : n === 2 ? [-Math.PI / 2 + 0.5, Math.PI / 2 + 0.5]
-        : Array.from({ length: n }, (_, i) => (TAU * i) / n + Math.PI / n);
-      return angles.map((t) => place(172 * Math.sin(t), 104 * Math.cos(t)));
-    }
-    // two rows: behind the pond, and in front of it out to the sides (the pond stays in view)
-    const back = Math.ceil(n / 2), front = n - back;
-    const row = (k, v, spread, gap) => Array.from({ length: k }, (_, i) => {
-      const step = Math.min(spread, (2 * spread) / Math.max(1, k - 1));
-      let u = (i - (k - 1) / 2) * step;
-      if (gap && k % 2 === 1 && i === (k - 1) / 2) u = 0;
-      return place(u, v);
+    // one zigzag line across the lagoon (alternately forward and back), two lines for a crowd
+    const line = (k, v, span) => Array.from({ length: k }, (_, i) => {
+      const gap = k > 1 ? Math.min(140, span / (k - 1)) : 0;
+      return place((i - (k - 1) / 2) * gap, v + (k > 1 ? (i % 2 ? 44 : -18) : 0));
     });
-    return [...row(back, -108, 190, false), ...row(front, 78, 182, true)];
+    if (n <= 5) return line(n, n <= 3 ? 30 : 20, n <= 3 ? 280 : 360);
+    const back = Math.ceil(n / 2);
+    return [...line(back, -60, 360), ...line(n - back, 100, 340)];
   };
   const layout = {
     width: W, height: H,
-    sage: { size: sageSize / W, anchorX: origin[0] / SAGE_VIEW, anchorY: origin[1] / SAGE_VIEW },
+    sage: { size: sageSize / W, anchorX: origin[0] / SAGE_VIEW, anchorY: origin[1] / SAGE_VIEW, ...MARKS },
     // sprite scale by host count (crowded decks get smaller sages)
-    scale: Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i + 1, i + 1 >= 6 ? 0.76 : i + 1 >= 4 ? 0.88 : 1])),
-    pond: { x: at([0, 0, 1.4])[0] / W, y: at([0, 0, 1.4])[1] / H, rx: (POND_R * P.scale * 1.15) / W },
+    scale: Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i + 1, i + 1 >= 6 ? 0.7 : i + 1 >= 4 ? 0.8 : 1])),
+    pond: { x: at([0, -150, SEA])[0] / W, y: at([0, -150, SEA])[1] / H, rx: (40 * P.scale) / W },
     lights: lights.map((l) => ({ x: l.at[0] / W, y: l.at[1] / H, r: l.r / W, color: l.color })),
     // open sea in front of the floe, where the orca fins swim (fractions of the picture)
     sea: (() => { const lowest = Math.max(...FLOE.map(([x, y]) => at([x, y, SEA])[1])); return { top: Math.min(0.97, (lowest + 6) / H), bottom: 1 }; })(),

@@ -57,7 +57,7 @@ if (process.argv.includes("--audit")) {
   for (const [state] of STATES) for (const t of [0, 0.35, 0.55]) {
     const { R } = frameSvg(T, state, t, "audit");
     console.log(`\n== ${state} @ ${t}`);
-    A.auditOrExit(R, undefined, { argv: ["--audit"], allow: SOCKETS });
+    A.auditOrExit(R, undefined, { argv: ["--audit"], allow: SOCKETS, cover: ["spout", "water.front", "incense"] });   // effects with no solid: spray, the water surface, smoke
     if (process.exitCode) { failed++; process.exitCode = 0; }
   }
   console.log(failed ? `\naudit failed in ${failed} poses` : "\naudit passed in every pose");
@@ -124,6 +124,6 @@ document.querySelector(".sg-stage").addEventListener("keydown", (e) => {
 requestAnimationFrame(tick);
 `;
   const theme = process.argv.includes("--light") ? "light" : "dark";
-  writeFileSync(previewPath, k.pageHtml({ title: "Karakuri sage", theme, body: `<style>${SAGE_CSS}.sg-stage:focus,.sg-stage:focus-visible{outline:none;box-shadow:none}</style>` + body, script: live }));
+  writeFileSync(previewPath, k.pageHtml({ title: "Karakuri sage", theme, body: `<style>${SAGE_CSS}.sg-stage:focus,.sg-stage:focus-visible{outline:none;box-shadow:none}.sg-stage{border-radius:10px;background:radial-gradient(ellipse 62% 48% at 50% 64%,#1b2c54 0%,#18284e 52%,rgba(19,19,19,0) 100%)}</style>` + body, script: live }));
   console.log("wrote", previewPath);
 }

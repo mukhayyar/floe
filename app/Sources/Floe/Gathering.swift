@@ -9,7 +9,11 @@ import SwiftUI
 // its host.
 
 struct SceneLayout: Decodable {
-    struct Sage: Decodable { let size: Double; let anchorX: Double; let anchorY: Double }
+    struct Sage: Decodable {
+        let size: Double, anchorX: Double, anchorY: Double
+        // where the badge (by the sage's head) and the name (by the orca's nose) go, as sprite fractions
+        let headX: Double?, headY: Double?, labelX: Double?, labelY: Double?
+    }
     struct Pond: Decodable { let x: Double; let y: Double; let rx: Double }
     struct Light: Decodable { let x: Double; let y: Double; let r: Double; let color: String }
     struct Seat: Decodable { let x: Double; let y: Double; let depth: Double }
@@ -91,7 +95,7 @@ struct GatheringView: View {
                 } else {
                     LinearGradient(colors: [Color(red: 0.04, green: 0.06, blue: 0.13), Color(red: 0.02, green: 0.03, blue: 0.06)], startPoint: .top, endPoint: .bottom)
                     HStack(spacing: 8) {
-                        ForEach(store.hosts) { h in FloeSeat(host: h, size: 84, anchorY: 0.69).frame(width: 84, height: 84) }
+                        ForEach(store.hosts) { h in FloeSeat(host: h, size: 84, anchorY: 0.69, marks: nil, layer: .both).frame(width: 84, height: 84) }
                     }
                     .frame(width: g.size.width, height: g.size.height)
                     .onAppear { scene.load() }
@@ -143,9 +147,16 @@ struct GatheringView: View {
         let seats = layout.seats["\(max(hosts.count, 1))"] ?? []
         let size = fit.length(layout.sage.size) * (layout.scale?["\(max(hosts.count, 1))"] ?? 1)
         let order = zip(hosts, seats).sorted { $0.1.depth < $1.1.depth }
+        // sprites nearest-last, then every name and badge above all of them, so none is hidden
         ForEach(Array(order.enumerated()), id: \.element.0.id) { _, pair in
             let p = fit.point(pair.1.x, pair.1.y)
-            FloeSeat(host: pair.0, size: size, anchorY: layout.sage.anchorY)
+            FloeSeat(host: pair.0, size: size, anchorY: layout.sage.anchorY, marks: layout.sage, layer: .sprite)
+                .frame(width: size, height: size)
+                .position(x: p.x - (layout.sage.anchorX - 0.5) * size, y: p.y - (layout.sage.anchorY - 0.5) * size)
+        }
+        ForEach(Array(order.enumerated()), id: \.element.0.id) { _, pair in
+            let p = fit.point(pair.1.x, pair.1.y)
+            FloeSeat(host: pair.0, size: size, anchorY: layout.sage.anchorY, marks: layout.sage, layer: .labels)
                 .frame(width: size, height: size)
                 .position(x: p.x - (layout.sage.anchorX - 0.5) * size, y: p.y - (layout.sage.anchorY - 0.5) * size)
         }
@@ -164,15 +175,33 @@ struct FloeSeat: View {
     let host: HostView
     let size: CGFloat
     let anchorY: Double
+    let marks: SceneLayout.Sage?
+    enum Layer { case sprite, labels, both }
+    var layer: Layer = .both
 
     var body: some View {
         let mood = store.hostMood(host)
+        let badgeAt = CGPoint(x: size * ((marks?.headX ?? 0.62) + 0.06), y: size * ((marks?.headY ?? 0.14) - 0.05))
+        let labelAt = CGPoint(x: size * (marks?.labelX ?? 0.5), y: size * min(0.97, (marks?.labelY ?? (anchorY + 0.27)) + 0.04))
         ZStack {
-            SageAvatar(seed: host.id, kind: host.kind, name: host.name, mood: mood, orbits: host.counts.working)
+            if layer != .labels {
+                SageAvatar(seed: host.id, kind: host.kind, name: host.name, mood: mood, orbits: host.counts.working)
+            }
+            if layer != .sprite { labels(badgeAt: badgeAt, labelAt: labelAt) }
+        }
+        .frame(width: size, height: size)
+        .contentShape(Rectangle())
+        .allowsHitTesting(layer != .labels)
+        .onTapGesture { store.push(.host(host.id)) }
+        .help("\(host.name): \(kindLabel(host)). \(host.projects.count) projects, \(host.counts.agents) agents. Click to open.")
+    }
+
+    @ViewBuilder
+    private func labels(badgeAt: CGPoint, labelAt: CGPoint) -> some View {
             if host.counts.attention > 0 {
-                badge("!", .orcaOrange).position(x: size * 0.7, y: size * 0.1)
+                badge("!", .orcaOrange).position(badgeAt)
             } else if host.counts.working > 0 {
-                badge("\(host.counts.working)", .orcaBlue).position(x: size * 0.7, y: size * 0.1)
+                badge("\(host.counts.working)", .orcaBlue).position(badgeAt)
             }
             VStack(spacing: 0) {
                 Text(host.name)
@@ -189,12 +218,7 @@ struct FloeSeat: View {
             .background(Capsule().fill(Color.black.opacity(0.55)))
             .frame(maxWidth: size * 1.3)
             .fixedSize()
-            .position(x: size / 2, y: size * min(0.97, anchorY + 0.27))
-        }
-        .frame(width: size, height: size)
-        .contentShape(Rectangle())
-        .onTapGesture { store.push(.host(host.id)) }
-        .help("\(host.name): \(kindLabel(host)). \(host.projects.count) projects, \(host.counts.agents) agents. Click to open.")
+            .position(labelAt)
     }
 
     private var subtitle: String {

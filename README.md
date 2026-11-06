@@ -2,11 +2,11 @@
 
 **A Dynamic-Island overlay for [Orca](https://orca.stably.ai).** Floe sits in your Mac's notch and shows what
 your Orca agents are doing on every host: live tool-call timelines, questions waiting for an answer,
-and a little ice floe where every machine is a mechanical sage at work. It stays out of your way,
-even in a full-screen game.
+and a moonlit lagoon where every machine is a mechanical sage riding an orca. It stays out of your
+way, even in a full-screen game.
 
 <p align="center">
-  <img src="docs/floe.gif" width="380" alt="Floe: the Live tab with two agents, the Hosts tab with four karakuri sages on an ice floe, and a host's projects">
+  <img src="docs/floe.gif" width="380" alt="Floe: the Live tab with two agents, the Hosts tab with four karakuri sages riding orcas in a lagoon, and a host's projects">
   <br><a href="docs/floe.mp4">Watch the video (MP4)</a>
 </p>
 
@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/mukhayyar/floe/main/install.sh | ba
 | | |
 |---|---|
 | <img src="docs/live.png" width="300" alt="Live tab"> | **Live.** Agents that need you come first, then working, then recently finished. Each one shows its tool calls as a timeline that draws itself step by step. When an agent asks a question or wants permission, its options are buttons: tap one, or type an answer. |
-| <img src="docs/hosts.png" width="300" alt="Hosts tab"> | **Hosts.** Every Orca host is a karakuri sage on an ice floe in a moonlit sea. It writes on its scroll (or types, on this Mac) while its agents work, strikes its singing bowl when one needs you, and sleeps with its lantern out when the host is offline. Orca fins pass in the sea now and then. |
+| <img src="docs/hosts.png" width="300" alt="Hosts tab"> | **Hosts.** Every Orca host is a karakuri sage riding an orca in a lagoon inside a ring of ice. While its agents work, the orca swims, beating its flukes and leaving a wake, and the sage writes on its scroll (or types, on this Mac). When one needs you, the orca spouts and the sage strikes its singing bowl. When the host is offline, the orca drifts with its eye shut and the lantern goes out. |
 | <img src="docs/host.png" width="300" alt="A host"> | **Drill down.** Tap a sage, then a project, then a worktree: its agents and terminals (the main terminal is marked). Peek at a terminal, type into it, message an agent, start Claude or Codex, or jump to it in Orca. |
 | <img src="docs/project.png" width="300" alt="A project"> | **Ask Orca.** The Ask tab is a headless Claude Code session that can read your repos and drive Orca through its CLI, on any host. Pick a worktree and its pill sits above the input, so you know where a message goes. |
 
@@ -49,15 +49,17 @@ orange pulse when one needs you, and a green tick when one finishes.
 
 ### The sages
 
-<img src="docs/sage.png" width="330" align="right" alt="A karakuri sage at work">
+<img src="docs/sage.png" width="330" align="right" alt="A karakuri sage riding an orca">
 
 Each host gets its own automaton, drawn as an isometric figure with the
-[anatomy](https://skills.wheresryan.sh/anatomy) kit. The figure is a turned wooden doll with ball-jointed
-arms, seated on a lacquered plinth.
-- **Seeded per host:** the hat, the silk robe's colour, the plinth, the beard, a lantern or incense,
-  and the characters it writes are all seeded from the host id. Floe picks them so no two hosts look alike.
-- **Label plate:** the host's initials are engraved on it.
-- **While agents work:** the flywheel on the plinth turns.
+[anatomy](https://skills.wheresryan.sh/anatomy) kit: a turned wooden doll with ball-jointed arms,
+riding an orca. The host is part of Orca, so its sage rides one.
+- **The orca:** one turned body with a tall dorsal fin, beating flukes, pectoral fins and white
+  markings. The saddle board on its back carries the sage, its desk, its singing bowl and a lantern
+  or incense.
+- **Seeded per host:** the hat, the silk robe's colour, the board's shape and lacquer, the beard,
+  the orca's markings and the characters it writes. Floe picks them so no two hosts look alike.
+- **Name plate:** the host's initials are on a brass plate at the front of the board.
 
 The proxy renders each sage once per host as a sprite sheet. Floe plays it with Core Animation, so
 it costs the app nothing per frame.
@@ -113,20 +115,20 @@ Floe.app (Swift, AppKit + SwiftUI)  ──HTTP/SSE──▶  proxy (Bun, 127.0.0
                                                     ├─ Orca servers: one long-lived client on Orca's own RuntimeClient
                                                     ├─ writes: the official `orca` CLI
                                                     ├─ Ask: `claude -p`, resumable
-                                                    └─ sages: anatomy-kit figures → sprite sheets (headless Chrome)
+                                                    └─ sages: anatomy-kit orca riders → sprite sheets (headless Chrome)
 ```
 
 - `proxy/src/orca.ts` polls every host and builds the host → project → worktree → agent
   snapshot. It tracks each agent's tool steps and emits `snapshot` and `activity` events.
   `menu.ts` reads choice menus off an agent's screen (`bun test`).
 - `sage/` holds the sages and the floe:
-  - `sage.mjs` is the automaton and its four loops; `palette.mjs` holds the materials.
-  - `scene.mjs` is the ice floe, with the seat layout for 1–10 hosts.
+  - `sage.mjs` is the orca rider and its four loops; `palette.mjs` holds the materials.
+  - `scene.mjs` is the ice ring and lagoon, with the seat layout for 1–10 hosts.
   - `build.mjs` renders them (`--sheet`, `--scene`, `--preview`) and runs the geometry audit
     (`--audit`, every state).
 - `app/Sources/Floe/` is the overlay:
   - `IslandWindow`: the panel, dragging, focus and the cursor.
-  - `Gathering` and `Sage`: the floe and the sprite players.
+  - `Gathering` and `Sage`: the lagoon and the sprite players.
   - `HostsView`: the drill-down.
   - `Timeline`: the tool steps.
   - `AgentViews` and `ChatViews`.

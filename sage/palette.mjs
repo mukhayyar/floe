@@ -67,6 +67,7 @@ const M = {
   tatami: material("#a9a46e"),
   zabuton: material("#6e2d3c"),
   felt: material("#8b3a2e"),
+  orca: material("#1f1f25", { edge: "#9aa3b5" }),
 };
 
 /** Which material each drawn item wears, by name. */
@@ -75,6 +76,10 @@ export function paletteOf(T) {
   const lacquer = material(T.lacquer[1]);
   const hat = { kasa: M.straw, eboshi: M.lacquerBlack, topknot: M.hair, nimbus: M.gold }[T.hat];
   const rules = [
+    [/^orca\./, M.orca],
+    [/^(board|board\.lip)$/, lacquer],
+    [/^nameplate$/, M.brass],
+    [/^saddle\./, M.wood],
     [/^mat$/, M.tatami],
     [/^(lap|torso)$/, robe],
     [/^arm\.[rl]\.(upper|fore|shoulder|elbow)/, robe],

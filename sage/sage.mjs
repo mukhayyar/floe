@@ -1,12 +1,15 @@
-// A karakuri sage: one small mechanical monk per Orca host, built with the anatomy kit.
+// A karakuri sage riding an orca: one small mechanical monk per Orca host, built with the
+// anatomy kit. (The host is part of Orca, so its sage rides one.)
 //
-// The host is the automaton. It sits on a lacquered plinth with a flywheel on its side and a
-// winding key at the front. While the host's agents work, the flywheel turns and the sage
-// writes on a scroll (or types on a laptop, for this Mac); every column it finishes rolls the
-// scroll on. When an agent needs you it strikes the singing bowl at its side. The lantern
-// (or the incense) burns while the host is online; offline, the light goes out and the sage
-// bows its head. Hat, plinth, beard, lantern or incense, and the characters it writes are
-// seeded from the host id, and the host's initials are engraved on the label plate.
+// The host is the automaton. It sits on a lacquered saddle board strapped to the back of a
+// turned, black-and-white orca that floats in the sea. While the host's agents work, the orca
+// swims (its flukes beat and it leaves a wake) and the sage writes on a scroll (or types on a
+// laptop, for this Mac); every column it finishes rolls the scroll on. When an agent needs
+// you, the orca spouts and the sage strikes the singing bowl at its side. The lantern (or the
+// incense) burns while the host is online; offline, the light goes out, the orca drifts with
+// its eye shut and the sage bows its head. Hat, robe, board, beard, lantern or incense, the
+// orca's markings and the characters it writes are seeded from the host id, and the host's
+// initials are on a brass plate on the board.
 
 import * as k from "./kit/iso-kit.mjs";
 import * as G from "./kit/lathe.mjs";
@@ -14,7 +17,7 @@ import * as A from "./kit/audit.mjs";
 import { tubePieces, tubeSvg } from "./kit/tube.mjs";
 import { ROBES, LACQUERS, paletteOf } from "./palette.mjs";
 
-export const VERSION = 1;
+export const VERSION = 2;
 /** [state, frames, seconds per loop] — rows of the sprite sheet, in this order. */
 export const STATES = [
   ["idle", 8, 3.2],
@@ -82,17 +85,29 @@ export function traitsOf({ id, name, kind, salt = 0 }) {
     monogram: monogram(name),
     robe: pick(ROBES),
     lacquer: pick(LACQUERS),
+    marks: Math.floor(r() * 3) - 1,
   };
 }
 export const comboOf = (t) => `${t.hat}/${t.plinth}/${t.accessory}/${t.beard ? "beard" : "clean"}/${t.desk}/${t.robe[0]}/${t.lacquer[0]}`;
 
 // ---------------------------------------------------------------- world
 
+// ---- the orca: a turned body along +y (it swims the way the sage faces), widest under the board
+const ORCA_R = 38, ORCA_L = 184;
+const ORCA_TM = 0.9 / 1.32;
+const ORCA_NORM = Math.pow(ORCA_TM, 0.9) * Math.pow(1 - ORCA_TM, 0.42);
+const Y_TAIL = -ORCA_TM * ORCA_L;      // so the widest ring sits at y = 0
+const ZC = 4;                          // the body's axis above the sea (z = 0 is the sea)
+const orcaR = (s) => { const t = clamp(s / ORCA_L, 1e-4, 1 - 1e-4); return (ORCA_R * Math.pow(t, 0.9) * Math.pow(1 - t, 0.42)) / ORCA_NORM; };
+const orcaSlope = (s) => { const t = clamp(s / ORCA_L, 1e-3, 1 - 1e-3); return ((ORCA_R / ORCA_NORM) * (0.9 * Math.pow(t, -0.1) * Math.pow(1 - t, 0.42) - 0.42 * Math.pow(t, 0.9) * Math.pow(1 - t, -0.58))) / ORCA_L; };
+const sOf = (y) => y - Y_TAIL;
+const backAt = (y) => ZC + orcaR(sOf(y));    // the top of the orca's back at y
+
 const P = k.fitProjection(
-  [...k.boxCorners({ x: -43, y: -41, w: 86, d: 82, r: 0 }, -5, 18.5), [0, -16, 88], [25.5, -25.5, 47]],
+  [...k.boxCorners({ x: -66, y: Y_TAIL - 46, w: 132, d: -Y_TAIL + 46 + 82, r: 0 }, -2, 0), [0, -16, 112], [0, -58, 88], [25.5, -25.5, 74], [-40, 0, 60], [40, 0, 50]],
   VIEW,
   VIEW,
-  { pad: 6, azimuth: 52 },
+  { pad: 4, azimuth: 52 },
 );
 export const PROJECTION = P;
 const V = G.viewOf(P);
@@ -103,8 +118,9 @@ const D = (points, style) => k.dotsSvg(points, style);
 const path3 = (points, closed = false) => k.pathOf(points.map(at), closed);
 const zUp = (o) => G.frameOf(o, [0, 0, 1], [1, 0, 0], [0, 1, 0]);
 
-const BODY = 16;                    // plinth body height
-const TOP = BODY + 2.5;             // plinth top, over the lip
+const BOARD_Z = backAt(0) + 0.3;    // the saddle board stands on blocks just clear of the back
+const BODY = 5;                     // board thickness
+const TOP = BOARD_Z + BODY + 2;     // board top, over the lip
 const PL = { x: -38, y: -38, w: 76, d: 76, r: 4.5 };
 const HEX_R = 46;
 const HEX = Array.from({ length: 6 }, (_, i) => [HEX_R * Math.cos((i * TAU) / 6), HEX_R * Math.sin((i * TAU) / 6)]);
@@ -139,6 +155,12 @@ const PEN_X = 5.2;
 const BOWL = [-29.8, 7];
 const BU = 0.85;                    // the bowl and its cushion are a little smaller
 const LAMP = [25.5, -25.5];
+/** Where Floe pins a count badge (by the sage's head) and the host's name (by the orca's nose), as sprite fractions. */
+export const MARKS = (() => {
+  const head = k.iso([SAGE[0], SAGE[1], MAT_TOP + TORSO_Z + TORSO_H + 3.4 * U + 7.8], P);
+  const nose = k.iso([0, ORCA_L + Y_TAIL + 4, -6], P);
+  return { headX: head[0] / VIEW, headY: head[1] / VIEW, labelX: nose[0] / VIEW, labelY: nose[1] / VIEW };
+})();
 
 // ---------------------------------------------------------------- frame
 
@@ -161,7 +183,7 @@ export function frameSvg(T, state, t, uid = "f") {
   const breath = state === "working" ? 0.25 * Math.sin(TAU * t * 2) : 0.55 * Math.sin(TAU * t);
   const bow = state === "asleep" ? 1 : 0;
 
-  plinth(T, base, rec, state, t, paint);
+  mount(T, base, put, rec, state, t, uid);
 
   // tatami mat under the sage
   put("mat", [SAGE[0], SAGE[1], TOP + 0.8],
@@ -288,93 +310,162 @@ function jointedArm(_, name, put, shoulder, hand, side) {
   return hand;
 }
 
-// ---------------------------------------------------------------- plinth
+// ---------------------------------------------------------------- the orca and its saddle
 
-function plinth(T, out, rec, state, t, paint) {
-  const working = state === "working";
-  const open = (m) => out.push(`<g style="${m}">`);
-  const close = () => out.push(`</g>`);
-  const spin = working ? (t * TAU) / 3 : 0.35;       // six spokes: a third of a turn loops
-  if (T.plinth === "hex") {
-    out.push(`<path class="iso-halo" d="${k.haloOf({ x: -41, y: -36, w: 82, d: 72, r: 20 }, -5, 24, P)}"/>`);
-    open(paint.lacquer);
-    const feet = [0, 2, 4].map((i) => [HEX[i][0] * 0.78, HEX[i][1] * 0.78]).sort((a, b) => k.depthOf([...a, 0], P) - k.depthOf([...b, 0], P));
-    for (const [x, y] of feet) {
-      out.push(S(k.cylinder(x, y, 5, -5, 1.2, P, 28), { tone: "lo" }));
-      out.push(S(k.cylinder(x, y, 3.8, -3.8, 3.8, P, 28), { tone: "mid" }));
-      rec(A.cylinder(x, y, 5, -5, 5, { name: "stand.foot" }));
+const SEA_A = 64, SEA_B = 124, SEA_CY = (Y_TAIL - 46 + 82) / 2;
+const ellipse = (a, b, cy, n = 72, cx = 0) => Array.from({ length: n }, (_, i) => { const q = (i / n) * TAU; return [cx + a * Math.cos(q), cy + b * Math.sin(q)]; });
+
+/**
+ * The orca, the water round it, and the saddle board on its back. The sea patch, ripples and
+ * wake go first (out); the body's three bands, fins, board and the near water surface are
+ * items, so the depth solver orders them against the sage, the desk and each other.
+ */
+function mount(T, out, put, rec, state, t, uid) {
+  const working = state === "working", asleep = state === "asleep", attention = state === "attention";
+  const F = G.frameOf([0, Y_TAIL, ZC], [0, 1, 0], [1, 0, 0], [0, 0, 1]);
+
+  // ---- the sea round it: a soft patch that melts into Floe's sea, ripples, and a wake
+  out.push(`<defs><radialGradient id="sea-${uid}"><stop offset="0" stop-color="#1b2c54" stop-opacity="0.96"/><stop offset="0.72" stop-color="#17274c" stop-opacity="0.7"/><stop offset="1" stop-color="#132244" stop-opacity="0"/></radialGradient></defs>`);
+  out.push(`<path d="${k.onTop(ellipse(SEA_A, SEA_B, SEA_CY), 0, P, true)}" fill="url(#sea-${uid})"/>`);
+  const ripple = (d, alpha, w = 0.8) => `<path d="${d}" fill="none" stroke="#cfe0ff" stroke-width="${w}" stroke-linecap="round" opacity="${alpha.toFixed(2)}"/>`;
+  if (!asleep) {
+    for (let i = 0; i < 3; i++) {
+      const ph = (t * (working ? 2 : 1) + i / 3) % 1;
+      out.push(ripple(k.onTop(ellipse(36 + 24 * ph, 92 + 30 * ph, -12), 0, P, true), (1 - ph) * 0.32));
     }
-    const seams = [3, 13].map((z) => L(k.ringSeam(HEX, z, P), { tone: "faint" })).join("");
-    out.push(S(k.extrude(HEX, 0, BODY, P, { bevel: 0.8 }), { tone: "mid", inner: seams }));
-    const lip = HEX.map(([x, y]) => [x * (HEX_R + 1.6) / HEX_R, y * (HEX_R + 1.6) / HEX_R]);
-    out.push(S(k.extrude(lip, BODY, 2.5, P, { bevel: 0.8 }), { tone: "mid" }));
-    out.push(L(k.onTop(HEX.map(([x, y]) => [x * 0.92, y * 0.92]), TOP, P, true), { tone: "faint" }));
-    out.push(D(HEX.map(([x, y]) => at([x * 0.96, y * 0.96, TOP])), { size: 0.55 }));
-    rec(A.extruded(HEX, 0, BODY, { name: "stand.plinth" }));
-    rec(A.extruded(lip, BODY, 2.5, { name: "stand.lip" }));
-    close();
-    open(paint.brass);
-    labelPlate(T, out, rec, -6, HEX_FRONT);
-    const n = [Math.cos(TAU / 12), Math.sin(TAU / 12), 0];
-    const c = G.mul3(n, HEX_R * Math.cos(TAU / 12));
-    flywheel(out, rec, [c[0], c[1], BODY / 2], n, spin, working);
-    close();
-  } else {
-    out.push(`<path class="iso-halo" d="${k.haloOf(PL, -5, 24, P)}"/>`);
-    open(paint.lacquer);
-    for (const [x, y] of k.corners(PL, 9).sort((a, b) => k.depthOf([...a, 0], P) - k.depthOf([...b, 0], P))) {
-      out.push(S(k.cylinder(x, y, 4.6, -5, 1.2, P, 28), { tone: "lo" }));
-      out.push(S(k.cylinder(x, y, 3.6, -3.8, 3.8, P, 28), { tone: "mid" }));
-      rec(A.cylinder(x, y, 4.6, -5, 5, { name: "stand.foot" }));
-    }
-    const seams = [3, 13].map((z) => L(k.sideSeam(PL, z, P, 6), { tone: "faint" })).join("");
-    out.push(S(k.slabOf(PL, 0, BODY, P, 6, 0.8), { tone: "mid", inner: seams }));
-    out.push(S(k.slabOf(k.insetPlan(PL, -1.6), BODY, 2.5, P, 6, 0.8), { tone: "mid" }));
-    out.push(L(k.planOutline(k.insetPlan(PL, 3.2), TOP, P, 6), { tone: "faint" }));
-    out.push(D(k.corners(PL, 1.6).map(([x, y]) => at([x, y, TOP])), { size: 0.55 }));
-    rec(A.slab(PL, 0, BODY, { name: "stand.plinth" }, 6));
-    rec(A.slab(k.insetPlan(PL, -1.6), BODY, 2.5, { name: "stand.lip" }, 6));
-    close();
-    open(paint.brass);
-    labelPlate(T, out, rec, -10, PL.y + PL.d);
-    flywheel(out, rec, [PL.x + PL.w, -8, BODY / 2], [1, 0, 0], spin, working);
-    windingKey(out, rec, [20, PL.y + PL.d, BODY / 2], working ? t * Math.PI : 0.4);
-    close();
   }
+  if (working) {
+    // a wake: dashes running back along a V from the flukes
+    for (const side of [-1, 1]) for (let j = 0; j < 6; j++) {
+      const f = ((j + t * 2) % 6) / 6, g = Math.min(1, f + 0.07);
+      const pt = (u) => [side * (4 + 30 * u), Y_TAIL - 10 - 62 * u];
+      out.push(ripple(k.lineOnTop(pt(f), pt(g), 0, P), 0.55 * (1 - f), 1));
+    }
+  }
+
+  // ---- the body: one turned profile cut into tail, middle (under the board) and head bands
+  const profile = Array.from({ length: 41 }, (_, i) => { const sv = (i / 40) * ORCA_L; return [sv, orcaR(sv)]; });
+  const cutBack = sOf(PL.y), cutFront = sOf(PL.y + PL.d);
+  const body = G.bandsOf(profile, [cutBack, cutFront], F, P, { radius: orcaR, slope: orcaSlope, steps: 84, rows: 6 });
+  const [tail, mid, head] = body.bands;
+  const band = (b, name, extra = "", bias = 0) => {
+    const sides = body.sidesOf(b.s0, b.s1);
+    put(name, G.pointOf(F, (b.s0 + b.s1) / 2, orcaR((b.s0 + b.s1) / 2) * 0.4, Math.PI / 2),
+      S(b.paths, { tone: "mid", crease: "none", inner: extra }) + L(sides.d, { tone: "hi" }),
+      [rec(A.solid(F, b.profile, { radius: orcaR, name, owner: "orca", ground: true }))], bias);   // the sea carries it
+  };
+
+  // markings: a white flank sweep, the eye patch, the eye and the mouth, on the side facing us
+  const surf = (sv, ang, lift = 0.25) => G.pointOf(F, sv, orcaR(sv) + lift, ang);
+  const patch = (s0, s1, lo, hi0, hi1, fill) => {
+    const n = 10, pts = [];
+    for (let i = 0; i <= n; i++) { const sv = mix(s0, s1, i / n); pts.push(surf(sv, mix(hi0, hi1, i / n))); }
+    for (let i = n; i >= 0; i--) { const sv = mix(s0, s1, i / n); pts.push(surf(sv, lo + 0.08 * Math.sin((Math.PI * i) / n))); }
+    return `<path d="${path3(pts, true)}" fill="${fill}" stroke="none"/>`;
+  };
+  const markV = T.marks ?? 0;
+  const flank = patch(cutBack - 30, cutBack - 2, -0.62, -0.18 + 0.1 * markV, 0.22 + 0.1 * markV, "#ece9e2");
+  const eyeS = cutFront + 10.5, eyeA = 0.2;
+  const eyePatch = patch(cutFront + 0.8, cutFront + 9.2, 0.34, 0.62 + 0.08 * markV, 0.5, "#f1eee8");
+  const eye = at(surf(eyeS, eyeA, 0.3));
+  const eyeSvg = asleep
+    ? L(path3([surf(eyeS - 1.2, eyeA - 0.02, 0.3), surf(eyeS + 1.2, eyeA + 0.02, 0.3)]), { tone: "hi", free: true })
+    : `<circle cx="${eye[0].toFixed(2)}" cy="${eye[1].toFixed(2)}" r="1.15" fill="#08080b"/><circle cx="${(eye[0] + 0.35).toFixed(2)}" cy="${(eye[1] - 0.4).toFixed(2)}" r="0.35" fill="#ffffff"/>`;
+  const mouth = L(path3(Array.from({ length: 8 }, (_, i) => surf(cutFront + 3 + i * 1.7, -0.12 + 0.05 * Math.sin((i / 7) * Math.PI), 0.3))), { tone: "lo", free: true });
+
+  band(tail, "orca.tail", flank, -1);
+  band(mid, "orca.mid", L([cutBack + 5, cutFront - 5].map((sv) => G.arcOf(F, sv, orcaR(sv) + 0.2, P, { slope: orcaSlope(sv) })).join(""), { tone: "lo" }), -0.5);
+  band(head, "orca.head", eyePatch + eyeSvg + mouth, 0.5);
+
+  // dorsal fin, tall and swept back, behind the board
+  const yFin = PL.y - 18;
+  const Ff = G.frameOf([0, yFin, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]);
+  // a short base chord that lies on the back's gentle curve, so the fin stands on it, not in it
+  const fin = [[-10, backAt(yFin - 10) - 0.2], [10, backAt(yFin + 10) - 0.2], [4, backAt(yFin) + 24], [-12, backAt(yFin) + 44]];
+  put("orca.fin", [0, yFin - 4, backAt(yFin) + 16], S(G.prismOf(Ff, fin, -1.8, 1.8, P), { tone: "mid" }), [rec(A.prism(Ff, fin, -1.8, 1.8, { name: "orca.fin", owner: "orca" }))], 0.2);
+
+  // flukes: two flat blades at the tail, beating while the orca swims
+  const beat = working ? 0.24 * Math.sin(TAU * t * 2) : asleep ? 0 : attention ? 0.12 * Math.sin(TAU * t * 2) : 0.07 * Math.sin(TAU * t);
+  const root = [0, Y_TAIL + 3, ZC];
+  const Fk = G.frameOf(root, G.unit3([0, Math.sin(beat), Math.cos(beat)]), [1, 0, 0], G.unit3([0, -Math.cos(beat), Math.sin(beat)]));
+  for (const side of [1, -1]) {
+    const blade = side > 0 ? [[0, 0], [30, 14], [24, 22], [0, 12]] : [[0, 0], [0, 12], [-24, 22], [-30, 14]];
+    put(`orca.fluke`, G.add3(root, [side * 14, -10, 0]), S(G.prismOf(Fk, blade, -1.2, 1.2, P), { tone: "mid" }), [rec(A.prism(Fk, blade, -1.2, 1.2, { name: `orca.fluke${side}`, owner: "orca" }))], 0.1);
+  }
+
+  // the pectoral fin on the side facing us, half in the water
+  const sp = cutFront - 22;
+  const Fp = G.frameOf(surf(sp, -0.3, -0.6), G.unit3(G.cross3(G.unit3([0.86, 0, -0.5]), [0, 1, 0])), G.unit3([0.86, 0, -0.5]), [0, 1, 0]);
+  const pec = [[0, -7], [0, 6], [15, 3], [22, -5], [15, -11]];
+  put("orca.pec", Fp.o, S(G.prismOf(Fp, pec, -0.9, 0.9, P), { tone: "mid" }), [rec(A.prism(Fp, pec, -0.9, 0.9, { name: "orca.pec", owner: "orca" }))], 0.3);
+
+  // the saddle: a lacquered board on the back, wooden blocks under its ends, a brass name plate
+  for (const y of [PL.y + 7, PL.y + PL.d - 7]) {
+    const plan = { x: -5, y: y - 4, w: 10, d: 8, r: 1 };
+    const z0 = Math.max(backAt(y - 4), backAt(y + 4)) - 0.3;   // resting on the back
+    put("saddle.block", [0, y, (z0 + BOARD_Z) / 2], S(k.slabOf(plan, z0, BOARD_Z - z0, P, 2, 0.4), { tone: "mid" }), [rec(A.slab(plan, z0, BOARD_Z - z0, { name: "saddle.block", owner: "orca" }, 2))], 0.4);
+  }
+  if (T.plinth === "hex") {
+    const lip = HEX.map(([x, y]) => [x * (HEX_R + 1.6) / HEX_R, y * (HEX_R + 1.6) / HEX_R]);
+    put("board", [0, 0, BOARD_Z + BODY / 2], S(k.extrude(HEX, BOARD_Z, BODY, P, { bevel: 0.6 }), { tone: "mid" }), [rec(A.extruded(HEX, BOARD_Z, BODY, { name: "board", owner: "orca" }))], 1);
+    put("board.lip", [0, 0, BOARD_Z + BODY + 1], S(k.extrude(lip, BOARD_Z + BODY, 2, P, { bevel: 0.6 }), { tone: "mid" }) +
+      L(k.onTop(HEX.map(([x, y]) => [x * 0.92, y * 0.92]), TOP, P, true), { tone: "faint" }) + D(HEX.map(([x, y]) => at([x * 0.96, y * 0.96, TOP])), { size: 0.55 }),
+      [rec(A.extruded(lip, BOARD_Z + BODY, 2, { name: "board.lip", owner: "orca" }))], 1.1);
+    namePlate(T, put, rec, -6, HEX_FRONT);
+  } else {
+    put("board", [0, 0, BOARD_Z + BODY / 2], S(k.slabOf(PL, BOARD_Z, BODY, P, 6, 0.6), { tone: "mid" }), [rec(A.slab(PL, BOARD_Z, BODY, { name: "board", owner: "orca" }, 6))], 1);
+    put("board.lip", [0, 0, BOARD_Z + BODY + 1], S(k.slabOf(k.insetPlan(PL, -1.6), BOARD_Z + BODY, 2, P, 6, 0.6), { tone: "mid" }) +
+      L(k.planOutline(k.insetPlan(PL, 3.2), TOP, P, 6), { tone: "faint" }) + D(k.corners(PL, 1.6).map(([x, y]) => at([x, y, TOP])), { size: 0.55 }),
+      [rec(A.slab(k.insetPlan(PL, -1.6), BOARD_Z + BODY, 2, { name: "board.lip", owner: "orca" }, 6))], 1.1);
+    namePlate(T, put, rec, -10, PL.y + PL.d);
+  }
+
+  // the spout, when an agent needs you: a fan of spray from the blowhole on the head
+  const spoutH = attention ? 52 * Math.sin(Math.PI * ((t * 2) % 1)) : 0;
+  if (spoutH > 4) {   // between spouts there is no spray at all
+    const hole = G.pointOf(F, cutFront + 12, orcaR(cutFront + 12) * 0.98, Math.PI / 2 - 0.12);
+    const h = spoutH;
+    let spray = "";
+    const jets = [];
+    for (let i = -2; i <= 2; i++) {
+      const pts3 = Array.from({ length: 9 }, (_, j) => { const u = j / 8; return [hole[0] + i * 3.2 * u * u, hole[1] + i * 1.2 * u, hole[2] + 2.2 + Math.max(0.5, h) * u - 6 * u * u * Math.abs(i) * 0.4]; });
+      spray += k.fadeLineSvg(pts3.map(at), { fade: [2, 6], tone: "hi" });
+      jets.push(A.tube(pts3, 0.5, { name: "spout" }));
+    }
+    const drops = [-6, -3, 0, 3, 6].map((dx, i) => at([hole[0] + dx * 1.4, hole[1] + dx * 0.5, hole[2] + h * (0.9 - 0.08 * Math.abs(dx)) + (i % 2) * 2]));
+    put("spout", hole, `<g style="--anatomy-hi:#d6e8ff">${spray}</g>` + drops.map(([x, y]) => `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="0.9" fill="#d6e8ff" opacity="0.8"/>`).join(""), jets, 0.5);
+  }
+
+  // the near water surface, over whatever is below the waterline on the side facing us
+  const wl = [];
+  for (let i = 0; i <= 60; i++) {
+    const sv = 1 + (i / 60) * (ORCA_L - 1.5);
+    const r = orcaR(sv);
+    if (r <= ZC) continue;
+    wl.push(G.pointOf(F, sv, r, -Math.asin(ZC / r)));
+  }
+  // down to the body's underside at each ring, so the surface covers only what is submerged
+  const deep = wl.map((p) => { const sv = p[1] - Y_TAIL; return [p[0] + 1.5, p[1] + 1.5, -(orcaR(sv) - ZC) - 2]; }).reverse();
+  const foamPts = wl.map(at);
+  // its true shape is the patch of water plane in front of the waterline that hides the
+  // submerged body: each deep point seen through the surface lands d·cot(30°) nearer the viewer
+  const look = [Math.cos((52 * Math.PI) / 180), Math.sin((52 * Math.PI) / 180)];
+  const lift = (p) => [p[0] - p[2] * Math.sqrt(3) * look[0], p[1] - p[2] * Math.sqrt(3) * look[1]];
+  const plane = [...wl.map((p) => [p[0], p[1]]), ...deep.map(lift)];
+  const waterShape = A.extruded(plane, -0.06, 0.06, { name: "water.front" });
+  put("water.front", [0, 70, -10], `<path d="${path3([...wl, ...deep], true)}" fill="#1b2c54" opacity="0.94"/>` +
+    `<path d="${k.pathOf(foamPts)}" fill="none" stroke="#dbe8ff" stroke-width="0.9" stroke-linecap="round" opacity="0.55"/>`, [waterShape], 0.2);
 }
 
-/** The one engraved label: the host's initials on a screwed plate on the front face. */
-function labelPlate(T, out, rec, cx, faceY) {
-  const plan = { x: cx - 11, y: faceY, w: 22, d: 0.9, r: 0.3 };
-  out.push(S(k.slabOf(plan, 3.6, 9.2, P, 2, 0.3), { tone: "lo" }));
-  rec(A.slab(plan, 3.6, 9.2, { name: "stand.label" }, 2));
-  const fy = faceY + 0.9;
-  const local = (x, y) => [cx + x, fy, 12.8 - y];
-  out.push(L(path3([local(-9.6, 1.1), local(9.6, 1.1), local(9.6, 8.1), local(-9.6, 8.1)], true), { tone: "faint" }));
-  out.push(k.faceTextSvg(k.sideMatrix([cx, fy], 6.6, P, "left"), T.monogram, { size: 5.6, tone: "lo", anchor: "middle" }));
-  out.push(D([local(-8, 2.6), local(8, 2.6), local(-8, 6.6), local(8, 6.6)].map(at), { size: 0.5 }));
-}
-
-/** Six-spoke flywheel on a side face: it turns while agents work. */
-function flywheel(out, rec, centre, normal, spin, working) {
-  const F = G.frameAlong(centre, normal);
-  out.push(S(G.disc(0, 1.1, 2.8, F, P, { steps: 28 }), { tone: "mid" }));
-  out.push(S(G.disc(1.1, 2.7, 6.4, F, P, { steps: 64, bevel: 0.3 }), { tone: "mid" }));
-  out.push(L(G.circleOf(F, 2.7, 5.4, P), { tone: "lo" }));
-  out.push(L(G.spokesOf(F, 2.7, 2, 5.4, 6, P, { phase: spin }), { tone: working ? "hi" : "lo" }));
-  out.push(S(G.disc(2.7, 3.9, 1.8, F, P, { steps: 24 }), { tone: "mid" }));
-  out.push(D([at(G.pointOf(F, 2.7, 4.2, spin + TAU / 12))], { size: 0.7, tone: "hi" }));
-  rec(A.disc(F, 0, 3.9, 6.4, { name: "stand.flywheel" }));
-}
-
-/** Butterfly winding key on the front: it turns slowly while agents work. */
-function windingKey(out, rec, centre, angle) {
-  const n = [0, 1, 0];
-  const F = G.frameOf(centre, n, [Math.cos(angle), 0, Math.sin(angle)], [-Math.sin(angle), 0, Math.cos(angle)]);
-  out.push(S(G.disc(0, 1.2, 2.8, F, P, { steps: 24 }), { tone: "mid" }));
-  out.push(S(G.disc(1.2, 3.6, 0.9, F, P, { steps: 16 }), { tone: "mid", crease: "none" }));
-  out.push(S(G.prismOf(F, G.stadium(1.5, 1.5, 6.4).map(([x, y]) => [x - 3.2, y]), 3.6, 4.6, P), { tone: "mid" }));
-  rec(A.disc(F, 0, 4.6, 4.8, { name: "stand.key" }));
+/** The host's initials on a brass plate, screwed to the board's front edge. */
+function namePlate(T, put, rec, cx, faceY) {
+  const plan = { x: cx - 9, y: faceY, w: 18, d: 0.8, r: 0.3 };
+  const z0 = BOARD_Z + 0.6, h = BODY - 1.2;
+  const fy = faceY + 0.8;
+  put("nameplate", [cx, faceY + 0.4, z0 + h / 2], S(k.slabOf(plan, z0, h, P, 2, 0.2), { tone: "lo" }) +
+    k.faceTextSvg(k.sideMatrix([cx, fy], z0 + 0.9, P, "left"), T.monogram, { size: 3.1, tone: "lo", anchor: "middle" }) +
+    D([[cx - 7.6, fy, z0 + h / 2], [cx + 7.6, fy, z0 + h / 2]].map(at), { size: 0.45 }),
+    [rec(A.slab(plan, z0, h, { name: "nameplate", owner: "orca" }, 2))], 1.3);
 }
 
 // ---------------------------------------------------------------- the sage
@@ -637,21 +728,24 @@ function accessory(T, put, rec, online, t) {
       `<path class="sg-ash" d="${G.circleOf(FC, 5.4, 4.8, P)}"/>`, [rec(A.solid(FC, pot, { name: "censer" }))]);
     let sticks = "";
     let smoke = "";
+    const strands = [];
     [[-1.4, -0.6, 0.1], [0.3, 1.2, -0.06], [1.6, -0.4, 0.14]].forEach(([dx, dy, lean], i) => {
       const foot = [x + dx, y + dy, TOP + 1.8 + 5.4];
       const top = G.add3(foot, [lean * 8, -lean * 4, 8.6 - i * 0.8]);
       sticks += L(path3([foot, top]), { tone: "mid" });
+      strands.push(A.tube([foot, top], 0.35, { name: "incense" }));
       if (online) {
         sticks += `<circle class="sg-ember" cx="${at(top)[0].toFixed(1)}" cy="${at(top)[1].toFixed(1)}" r="${(0.75 + 0.15 * Math.sin(TAU * (t + i / 3))).toFixed(2)}"/>`;
-        const pts = [];
+        const pts3 = [];
         for (let j = 0; j <= 10; j++) {
-          const h = j * 2.2;
-          pts.push(at([top[0] + 1.3 * Math.sin(TAU * (t + j / 7 + i / 3)) * (j / 10), top[1] - 0.4 * j * 0.1, top[2] + h]));
+          const h = 0.6 + j * 2.2;
+          pts3.push([top[0] + 1.3 * Math.sin(TAU * (t + j / 7 + i / 3)) * (j / 10), top[1] - 0.4 * j * 0.1, top[2] + h]);
         }
-        smoke += k.fadeLineSvg(pts, { fade: [1, 9], tone: "lo" });
+        smoke += k.fadeLineSvg(pts3.map(at), { fade: [1, 9], tone: "lo" });
+        strands.push(A.tube(pts3, 0.4, { name: "incense" }));
       }
     });
-    put("incense", [x, y, TOP + 12], sticks + smoke, [], 1);
+    put("incense", [x, y, TOP + 12], sticks + smoke, strands, 1);
   }
 }
 
@@ -665,6 +759,9 @@ export const SAGE_CSS = `
 `;
 
 export function describe(T) {
+  return describeRider(T);
+}
+function describeRider(T) {
   const hat = { kasa: "a straw kasa hat", eboshi: "a tall lacquered eboshi cap", topknot: "a topknot", nimbus: "a bronze nimbus ring behind its head" }[T.hat];
-  return `A karakuri sage automaton with ${hat}${T.beard ? " and a long beard" : ""}, seated on a ${T.plinth === "hex" ? "hexagonal" : "square"} lacquered plinth with a flywheel on its side and the initials ${T.monogram} on its label plate. In front of it a low desk holds ${T.desk === "laptop" ? "a laptop" : "a scroll between two rollers"}; a singing bowl sits on a cushion at its left and a ${T.accessory === "lantern" ? "stone lantern" : "censer of incense"} stands behind.`;
+  return `A karakuri sage automaton with ${hat}${T.beard ? " and a long beard" : ""}, in a ${T.robe[0]} silk robe, riding an orca. It sits on a ${T.plinth === "hex" ? "hexagonal" : "square"} lacquered saddle board strapped to the orca's back, in front of its tall dorsal fin, with the initials ${T.monogram} on a brass plate. On the board a low desk holds ${T.desk === "laptop" ? "a laptop" : "a scroll between two rollers"}, a singing bowl sits on a cushion at its left and a ${T.accessory === "lantern" ? "stone lantern" : "censer of incense"} stands behind.`;
 }
