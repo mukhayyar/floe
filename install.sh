@@ -16,8 +16,8 @@ set -euo pipefail
 REPO="mukhayyar/floe"
 PREFIX="${FLOE_PREFIX:-$HOME/Library/Application Support/Floe}"
 APPDIR="${FLOE_APPDIR:-$HOME/Applications}"
-AGENTS="$HOME/Library/LaunchAgents"
-LOGS="$HOME/Library/Logs/Floe"
+AGENTS="${FLOE_AGENTS:-$HOME/Library/LaunchAgents}"
+LOGS="${FLOE_LOGS:-$HOME/Library/Logs/Floe}"
 LABEL_PROXY="com.mukhayyar.floe.proxy"
 LABEL_APP="com.mukhayyar.floe"
 UID_NUM="$(id -u)"
@@ -125,7 +125,7 @@ fi
 
 # ---------------------------------------------------------------- install
 say "Installing to $APPDIR/Floe.app and $PREFIX"
-stop_agents
+[[ "${FLOE_NO_LAUNCHD:-0}" == "1" ]] || stop_agents
 mkdir -p "$PREFIX" "$APPDIR" "$AGENTS" "$LOGS"
 for part in proxy sage brain; do
   rm -rf "$PREFIX/$part"
