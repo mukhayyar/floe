@@ -88,24 +88,41 @@ CLAUDE="$(command -v claude || true)"
 # ---------------------------------------------------------------- download
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# download to a file with retries, and make sure what arrived is complete
+fetch() {
+  local url="$1" out="$2" n
+  for n in 1 2 3 4; do
+    if curl -fsSL --retry 2 -o "$out" "$url"; then
+      case "$out" in
+        *.tar.gz) gzip -t "$out" 2>/dev/null && return 0 ;;
+        *.zip) unzip -tq "$out" >/dev/null 2>&1 && return 0 ;;
+        *) return 0 ;;
+      esac
+    fi
+    sleep $((n * 2))
+  done
+  return 1
+}
 
 if [[ "$VERSION" == "latest" ]]; then
   VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1 || true)"
 fi
 if [[ -n "$VERSION" ]]; then
   say "Downloading Floe $VERSION"
-  curl -fsSL "https://github.com/$REPO/archive/refs/tags/$VERSION.tar.gz" | tar -xz -C "$TMP"
+  fetch "https://github.com/$REPO/archive/refs/tags/$VERSION.tar.gz" "$TMP/src.tar.gz" || die "Couldn't download Floe $VERSION. Check your connection and try again."
+  tar -xzf "$TMP/src.tar.gz" -C "$TMP"
 else
   warn "No release found; installing the latest code from main"
   FROM_SOURCE=1
-  curl -fsSL "https://github.com/$REPO/archive/refs/heads/main.tar.gz" | tar -xz -C "$TMP"
+  fetch "https://github.com/$REPO/archive/refs/heads/main.tar.gz" "$TMP/src.tar.gz" || die "Couldn't download Floe. Check your connection and try again."
+  tar -xzf "$TMP/src.tar.gz" -C "$TMP"
 fi
 SRC="$(find "$TMP" -maxdepth 1 -type d -name 'floe-*' | head -1)"
 [[ -d "$SRC/proxy" ]] || die "The download doesn't look like Floe."
 
 if [[ $FROM_SOURCE == 0 ]]; then
   # curl doesn't set the quarantine flag, so the ad-hoc signed app opens without a Gatekeeper prompt
-  if curl -fsSL -o "$TMP/Floe.zip" "https://github.com/$REPO/releases/download/$VERSION/Floe-macOS.zip"; then
+  if fetch "https://github.com/$REPO/releases/download/$VERSION/Floe-macOS.zip" "$TMP/Floe.zip"; then
     ditto -x -k "$TMP/Floe.zip" "$TMP/app"
   else
     warn "No prebuilt app in $VERSION; building it here instead"
