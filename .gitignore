@@ -1,0 +1,6 @@
+app/.build/
+proxy/node_modules/
+sage/node_modules/
+*.log
+.DS_Store
+dist/
