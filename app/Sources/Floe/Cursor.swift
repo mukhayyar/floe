@@ -36,7 +36,11 @@ enum FloeCursor {
         NSLog("Floe: background cursor %@", enabled ? "enabled" : "failed (\(err))")
     }
 
+    /// When the pointer last arrived on the panel.
+    static var enteredAt = Date.distantPast
+
     static func entered() {
+        if !hovering { enteredAt = Date() }
         hovering = true
         apply()
         startTimer()

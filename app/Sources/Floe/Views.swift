@@ -597,7 +597,7 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Toggle("Click-through when collapsed (open with \(store.config.hotkey))", isOn: $store.clickThrough)
+                Toggle("Click-through in full-screen games (open it with \(store.config.hotkey))", isOn: $store.clickThrough)
                 Toggle("Play a sound when an agent asks something", isOn: $store.sound)
                 Toggle("Show a banner when an agent finishes", isOn: $store.peekOnDone)
                 Toggle("Colored border so Floe is easy to spot", isOn: $store.border)

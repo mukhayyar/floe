@@ -44,9 +44,13 @@ final class IslandHostingView<Content: View>: NSHostingView<Content> {
         cursorArea = a
     }
 
+    /// While the pill is click-through, clicks go to the app underneath, so keep that app's
+    /// cursor too: an arrow here would promise a click that Floe never gets.
+    private var takesMouse: Bool { window?.ignoresMouseEvents != true }
+
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
-        if event.trackingArea === cursorArea { FloeCursor.entered() }
+        if event.trackingArea === cursorArea, takesMouse { FloeCursor.entered() }
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -56,6 +60,7 @@ final class IslandHostingView<Content: View>: NSHostingView<Content> {
 
     override func mouseMoved(with event: NSEvent) {
         super.mouseMoved(with: event)
+        guard takesMouse else { return }
         if !FloeCursor.hovering { FloeCursor.entered() } else { FloeCursor.apply() }
     }
 
@@ -108,6 +113,9 @@ final class IslandController: NSObject {
     private var previousApp: NSRunningApplication?
     private var monitors: [Any] = []
     private let baseLevel: NSWindow.Level
+    /// The app in front is full screen (a game, a full-screen video): the only place
+    /// click-through applies, so Floe always takes clicks on the normal desktop.
+    private var fullScreenFront = false
 
     init(store: IslandStore) {
         self.store = store
@@ -135,6 +143,7 @@ final class IslandController: NSObject {
         // @Published fires before the value lands; lay out on the next turn.
         store.$presentation.removeDuplicates().sink { [weak self] p in
             DispatchQueue.main.async {
+                if p == .compact { self?.refreshFullScreenFront() }
                 self?.layout(animated: true)
                 if p != .expanded { self?.releaseKey() }
             }
@@ -148,6 +157,18 @@ final class IslandController: NSObject {
             MainActor.assumeIsolated {
                 self?.restorePosition()
                 self?.layout(animated: false)
+            }
+        }
+
+        // Re-check whether a full-screen app is in front when apps or Spaces switch (a game
+        // can open its full-screen window a moment after it activates, so look again later).
+        let ws = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.activeSpaceDidChangeNotification] {
+            ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.refreshFullScreenFront()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self?.refreshFullScreenFront() }
+                }
             }
         }
 
@@ -174,6 +195,7 @@ final class IslandController: NSObject {
     }
 
     func show() {
+        refreshFullScreenFront()
         layout(animated: false)
         panel.orderFrontRegardless()
         FloeCursor.enableInBackground()
@@ -213,6 +235,28 @@ final class IslandController: NSObject {
         if let n = notchRect, abs(centerX - n.midX) < 2 { centerX = n.midX }
     }
 
+    /// Whether the frontmost app (not Floe) has a window covering the whole screen Floe is on:
+    /// a full-screen or borderless game, or any app in macOS full screen. Window bounds and
+    /// owners are readable without Screen Recording permission.
+    private func refreshFullScreenFront() {
+        var full = false
+        if let app = NSWorkspace.shared.frontmostApplication, app != NSRunningApplication.current,
+           let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] {
+            // Floe sits on the primary screen, whose global (top-left origin) rect starts at 0,0.
+            let s = CGRect(origin: .zero, size: screen.frame.size).insetBy(dx: 1, dy: 1)
+            full = list.contains { w in
+                guard (w[kCGWindowOwnerPID as String] as? pid_t) == app.processIdentifier,
+                      let layer = w[kCGWindowLayer as String] as? Int, layer >= 0, layer < Int(CGShieldingWindowLevel()) + 1,
+                      let b = w[kCGWindowBounds as String] as? NSDictionary,
+                      let r = CGRect(dictionaryRepresentation: b) else { return false }
+                return r.contains(s)
+            }
+        }
+        guard full != fullScreenFront else { return }
+        fullScreenFront = full
+        layout(animated: false)
+    }
+
     private func compactSize() -> CGSize {
         let active = store.mood != .idle && store.mood != .offline
         if geo.atNotch {
@@ -245,7 +289,12 @@ final class IslandController: NSObject {
         }
         if geo.overNotch != over { geo.overNotch = over }
         let frame = NSRect(x: x.rounded(), y: f.maxY - size.height, width: size.width, height: size.height)
-        panel.ignoresMouseEvents = store.clickThrough && store.presentation == .compact
+        let through = store.clickThrough && fullScreenFront && store.presentation == .compact
+        if panel.ignoresMouseEvents != through {
+            panel.ignoresMouseEvents = through
+            if through { FloeCursor.exited() }
+            NSLog("Floe: pill %@", through ? "is click-through (full-screen app in front; open it with the hotkey)" : "takes clicks")
+        }
         guard frame != panel.frame else { return }
         if animated && panel.isVisible {
             NSAnimationContext.runAnimationGroup { ctx in
@@ -380,6 +429,13 @@ final class IslandController: NSObject {
     // MARK: menu
 
     private func showMenu(_ event: NSEvent) {
+        // In a game, right-click is a game command (Dota moves with it). A right-click that
+        // lands on the pill while the pointer is only passing through would open this menu,
+        // and the next one would pick an item. Only open it once the pointer has rested here.
+        if fullScreenFront, Date().timeIntervalSince(FloeCursor.enteredAt) < 0.5 {
+            NSLog("Floe: ignored a right-click on the pill (full-screen app in front, pointer just arrived)")
+            return
+        }
         let menu = NSMenu()
         func item(_ title: String, _ sel: Selector, on: Bool? = nil) {
             let i = NSMenuItem(title: title, action: sel, keyEquivalent: "")
@@ -390,7 +446,7 @@ final class IslandController: NSObject {
         if notchRect != nil { item("Snap to Notch", #selector(snapNotch)) }
         item("Move to Center", #selector(snapCenter))
         menu.addItem(.separator())
-        item("Click-through When Collapsed", #selector(toggleClickThrough), on: store.clickThrough)
+        item("Click-through in Full-Screen Games", #selector(toggleClickThrough), on: store.clickThrough)
         item("Sound When an Agent Asks", #selector(toggleSound), on: store.sound)
         item("Show When an Agent Finishes", #selector(togglePeekDone), on: store.peekOnDone)
         item("Colored Border", #selector(toggleBorder), on: store.border)

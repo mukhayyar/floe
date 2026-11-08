@@ -71,7 +71,9 @@ now and then. All of it runs in Core Animation, so it costs the app nothing per 
 
 Floe never takes focus when you click it. It sits above borderless and full-screen games, including
 Dota 2's SDL full-screen mode, and has no hover-to-expand, so edge-panning won't open it. Over Floe
-you get the normal Mac cursor instead of the game's. Drag it along the top edge to clear your HUD.
+you get the normal Mac cursor instead of the game's (unless the pill is click-through, when the
+game keeps its cursor because the click goes to the game). Drag it along the top edge to clear
+your HUD.
 
 ## Use it
 
@@ -83,8 +85,11 @@ you get the normal Mac cursor instead of the game's. Drag it along the top edge 
 | right-click the pill | snap to notch, click-through, border, sounds, quit |
 | `open floe://hosts` | deep links: `live`, `hosts`, `ask`, `collapse`, `pin`, `unpin`, `host?id=…`, `project?host=…&key=…`, `workspace?host=…&project=…&key=…` |
 
-**Click-through when collapsed** (right-click menu or Settings) makes the pill ignore the mouse
-completely during games; open it with the hotkey instead.
+**Click-through in full-screen games** (right-click menu or Settings) makes the pill ignore the
+mouse while a full-screen app is in front, so a stray click lands in the game; open Floe with the
+hotkey instead. On the normal desktop the pill always takes clicks, so you can't lock yourself
+out. While a full-screen game is in front, a right-click on the pill opens the menu only once the
+pointer has rested on it, so moving your hero across the top of the screen won't open it.
 
 ## Settings
 
