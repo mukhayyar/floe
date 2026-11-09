@@ -1,12 +1,14 @@
-// The sages' lagoon: the backdrop of Floe's Hosts tab, in the same camera as the sages, so each
-// host's orca rider swims in it at true scale. (An orca's favourite place is the floe.) A ring
-// of layered ice floats in a moonlit sea around a calm lagoon; on the ring stand a vermilion
-// torii with two paper lanterns, a snowy pine, a red maple and stone lanterns. The riders swim
-// in the lagoon, and Floe animates orca fins in the open sea beyond.
+// The sages' sea: the backdrop of Floe's Hosts tab, in the same camera as the sages, so each
+// host's orca rider swims in it at true scale. Across the back, under the moon, lies a rocky,
+// snow-capped island with a shrine: a hall with vermilion pillars, a copper roof with ridge
+// logs and crossed finials, a sacred rope with paper streamers, paper and stone lanterns, a
+// snowy pine and a red maple. A great vermilion torii stands in the sea before it. Everything
+// in front of the island is open ocean, where Floe lets the orcas swim.
 //
-// sceneSvg() returns the picture and a layout for the app: where each seat is (for 1..10
-// hosts), how big a sage sprite is and where its origin sits, and where the pond and the
-// lantern lights are, so Floe can float ripples and glows over them.
+// sceneSvg() returns the picture and a layout for the app: how big a sage sprite is and where
+// its waterline sits (seen from the front and from behind), the band of open water the riders
+// may swim in, the moorings by the island for hosts that are asleep, where a host that needs
+// you comes to wait, and where the lantern lights are, so Floe can float glows over them.
 
 import * as k from "./kit/iso-kit.mjs";
 import * as G from "./kit/lathe.mjs";
@@ -15,50 +17,64 @@ import { tubePieces, tubeSvg } from "./kit/tube.mjs";
 import { material } from "./palette.mjs";
 import { PROJECTION as SAGE_P, VIEW as SAGE_VIEW, MARKS } from "./sage.mjs";
 
-export const W = 470, H = 460;
-const TAU = Math.PI * 2;
+const BACK = await import("./sage.mjs?az=232");
 
-const DECK = { x: -205, y: -160, w: 410, d: 320, r: 6 };
-const DECK_H = 12;
-const GROUND = -DECK_H;               // the floe's snowy top
-const SEA = GROUND - 15;              // waterline on the floe's sides
-const FLOE_RX = 300, FLOE_RY = 262;
-const POND = [0, 0], POND_R = 54;
-// the lagoon: the floe's inner edge, a ring of ice ~60 wide all round
-const LAGOON = 0.74;
-const onRing = (deg, f = 0.87) => { const a = (deg * Math.PI) / 180; return [FLOE_RX * f * Math.cos(a), FLOE_RY * f * Math.sin(a)]; };
-const TORII = onRing(-142, 0.86);
-const PINE = onRing(132, 0.88);
-const MAPLE = onRing(-62, 0.88);
-const FLOE = Array.from({ length: 30 }, (_, i) => {
-  const a = (i / 30) * Math.PI * 2;
-  const wob = 1 + 0.045 * Math.sin(a * 5 + 1.3) + 0.03 * Math.sin(a * 9 + 0.4);
-  return [FLOE_RX * wob * Math.cos(a), FLOE_RY * wob * Math.sin(a)];
+export const W = 470, H = 460;
+const AZ = (52 * Math.PI) / 180;
+// screen-aligned world axes: RIGHT runs left→right across the picture, TOWARD comes at you
+const RIGHT = [Math.sin(AZ), -Math.cos(AZ)];
+const TOWARD = [Math.cos(AZ), Math.sin(AZ)];
+const ACROSS = G.unit3([-Math.sin(AZ), Math.cos(AZ), 0]);
+const TOWARD3 = G.unit3([Math.cos(AZ), Math.sin(AZ), 0]);
+/** A world point from screen-aligned offsets: sx to the right, sy toward the viewer. */
+const W2 = (sx, sy) => [sx * RIGHT[0] + sy * TOWARD[0], sx * RIGHT[1] + sy * TOWARD[1]];
+
+const SEA = 0;
+const GROUND = 26;                    // the island's snowy top
+// the island: a long rocky shore across the back of the picture
+const ISLE_C = [0, -330], ISLE_RX = 480, ISLE_RY = 118;
+const CW = W2(...ISLE_C);
+const ISLE = Array.from({ length: 40 }, (_, i) => {
+  const a = (i / 40) * Math.PI * 2;
+  const wob = 1 + 0.05 * Math.sin(a * 5 + 1.3) + 0.03 * Math.sin(a * 11 + 0.4);
+  return W2(ISLE_C[0] + ISLE_RX * wob * Math.cos(a), ISLE_C[1] + ISLE_RY * wob * Math.sin(a));
 });
+const SHRINE = W2(60, -365);
+const SHRINE_SCALE = 1.5;          // the hall, drawn large enough to read as the shrine
+const TORII = W2(-90, -150);
+const PINE = W2(-385, -330);
+const MAPLE = W2(375, -345);
+const OCEAN_FRONT = 430;              // how far toward you the open water reaches (sets the frame)
 
 const P = k.fitProjection(
-  [...FLOE.map(([x, y]) => [x, y, SEA]), ...FLOE.map(([x, y]) => [x, y, GROUND]), [TORII[0], TORII[1], 118], [PINE[0], PINE[1], 112], [MAPLE[0], MAPLE[1], 100]],
+  [...ISLE.map(([x, y]) => [x, y, SEA]), ...ISLE.map(([x, y]) => [x, y, GROUND]),
+    [TORII[0], TORII[1], 124], [SHRINE[0], SHRINE[1], GROUND + 150], [PINE[0], PINE[1], GROUND + 110], [MAPLE[0], MAPLE[1], GROUND + 100],
+    [...W2(-480, OCEAN_FRONT), SEA], [...W2(480, OCEAN_FRONT), SEA]],
   W, H, { pad: 6, azimuth: 52 },
 );
 export const SCENE_P = P;
 const at = (p) => k.iso(p, P);
 const S = (paths, style) => k.solidSvg(paths, style);
 const L = (d, style) => k.lineSvg(d, style);
-const D = (pts, style) => k.dotsSvg(pts, style);
 const path3 = (pts, closed = false) => k.pathOf(pts.map(at), closed);
 const zUp = (o) => G.frameOf(o, [0, 0, 1], [1, 0, 0], [0, 1, 0]);
 const wear = (m, svg) => `<g style="${m}">${svg}</g>`;
 
 const M = {
-  ice: material("#a9c9d6"),
+  rock: material("#63646b"),
+  boulder: material("#7d7f86"),
   snow: material("#dbe7ec", { edge: "#7f97a3" }),
-  deck: material("#6a4630"),
-  beam: material("#4e3324"),
   stone: material("#7a7671"),
-  rock: material("#5e5c5a"),
-  water: material("#1d4a5e"),
+  plinth: material("#8b8780"),
+  wood: material("#5a3b28"),
+  floor: material("#6a4630"),
+  plaster: material("#e4ddcc", { edge: "#6f6556" }),
   torii: material("#b5402c"),
   toriiTop: material("#1e1b1d"),
+  roof: material("#3f7466", { edge: "#9fd2c2" }),
+  ridge: material("#24302d"),
+  gold: material("#c9a24a"),
+  straw: material("#c8b27a", { edge: "#6b5a32" }),
   pine: material("#2f5a3b"),
   maple: material("#b5482e"),
   bark: material("#4a3427"),
@@ -72,119 +88,169 @@ export function sceneSvg() {
   const rec = R.solid;
   const put = (name, ref, svg, shapes = [], bias = 0) => R.put({ name, at: ref, bias, svg, shapes });
   const back = [];
+  const lights = [];
 
-  // ---- sky, moon, stars, far mountains and mist (a painted backdrop behind the stage)
+  // ---- sky, moon, stars, far mountains (a painted backdrop behind the stage)
+  const isleBack = Math.min(...ISLE.map(([x, y]) => at([x, y, SEA])[1]));
+  const HZ = isleBack - 16;            // the horizon, just behind the island
   back.push(`<defs>
-    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0a0f22"/><stop offset="0.55" stop-color="#151b35"/><stop offset="1" stop-color="#1c2140"/></linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0a0f22"/><stop offset="0.7" stop-color="#151b35"/><stop offset="1" stop-color="#1e2444"/></linearGradient>
     <radialGradient id="moonglow"><stop offset="0" stop-color="#f6ecd2" stop-opacity="0.35"/><stop offset="1" stop-color="#f6ecd2" stop-opacity="0"/></radialGradient>
-    <linearGradient id="mist" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a3156" stop-opacity="0"/><stop offset="1" stop-color="#2a3156" stop-opacity="0.85"/></linearGradient>
-    <radialGradient id="pondlight"><stop offset="0" stop-color="#3f8fa6" stop-opacity="0.55"/><stop offset="1" stop-color="#3f8fa6" stop-opacity="0"/></radialGradient>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d2c52"/><stop offset="0.35" stop-color="#15234a"/><stop offset="1" stop-color="#0a1430"/></linearGradient>
   </defs>`);
   back.push(`<rect width="${W}" height="${H}" fill="url(#sky)"/>`);
   const r = rng(7);
   let stars = "";
-  for (let i = 0; i < 70; i++) {
-    const x = r() * W, y = r() * H * 0.42, s = 0.3 + r() * 0.8;
+  for (let i = 0; i < 80; i++) {
+    const x = r() * W, y = r() * HZ * 0.95, s = 0.3 + r() * 0.8;
     stars += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${s.toFixed(2)}" fill="#e8ecff" opacity="${(0.25 + r() * 0.55).toFixed(2)}"/>`;
   }
   back.push(stars);
-  const moon = [W * 0.83, H * 0.1];
-  back.push(`<circle cx="${moon[0]}" cy="${moon[1]}" r="46" fill="url(#moonglow)"/><circle cx="${moon[0]}" cy="${moon[1]}" r="15" fill="#f3e8cc"/><circle cx="${moon[0] + 5}" cy="${moon[1] - 3}" r="3" fill="#e2d5b4"/><circle cx="${moon[0] - 4}" cy="${moon[1] + 5}" r="2.2" fill="#e2d5b4"/>`);
-  // the sea below the horizon, a moonpath on it, far icebergs on the horizon
-  const HZ = H * 0.3;
-  back.push(`<defs><linearGradient id="sea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1c2a4e"/><stop offset="1" stop-color="#0a1328"/></linearGradient></defs>`);
-  back.push(`<rect y="${HZ}" width="${W}" height="${H - HZ}" fill="url(#sea)"/>`);
+  const moon = [W * 0.84, Math.max(30, HZ * 0.32)];
+  back.push(`<circle cx="${moon[0]}" cy="${moon[1]}" r="46" fill="url(#moonglow)"/><circle cx="${moon[0]}" cy="${moon[1]}" r="14" fill="#f3e8cc"/><circle cx="${moon[0] + 5}" cy="${moon[1] - 3}" r="3" fill="#e2d5b4"/><circle cx="${moon[0] - 4}" cy="${moon[1] + 5}" r="2.2" fill="#e2d5b4"/>`);
+  // far mountains, two layers of mist-blue ridges on the horizon
+  const ridge = (seed, base, height, fill, op) => {
+    const q = rng(seed);
+    let d = `M0 ${base}`;
+    for (let x = 0; x <= W; x += 18 + q() * 22) d += ` L${x.toFixed(1)} ${(base - height * (0.35 + q() * 0.65)).toFixed(1)}`;
+    return `<path d="${d} L${W} ${base} Z" fill="${fill}" opacity="${op}"/>`;
+  };
+  back.push(ridge(31, HZ, 34, "#26305a", 0.85), ridge(47, HZ, 18, "#313c6a", 0.9));
+  // the sea, from the horizon to the bottom of the picture
+  back.push(`<rect y="${HZ}" width="${W}" height="${H - HZ}" fill="url(#sea)"/>`, `<rect y="${HZ - 1}" width="${W}" height="2" fill="#3a4a78" opacity="0.6"/>`);
+  // the moon's path on the water, and long slow swells (longer nearer you)
   const q = rng(19);
-  let berg = "";
-  for (const [x, w, h] of [[30, 60, 16], [120, 38, 10], [300, 70, 20], [400, 44, 12]]) {
-    berg += `<path d="M${x} ${HZ} L${x + w * 0.3} ${HZ - h} L${x + w * 0.55} ${HZ - h * 0.7} L${x + w * 0.7} ${HZ - h * 0.9} L${x + w} ${HZ} Z" fill="#3a4a72" opacity="0.8"/>`;
-  }
-  back.push(berg, `<rect y="${HZ - 2}" width="${W}" height="3" fill="#2c3a62" opacity="0.6"/>`);
-  let path = "";
-  for (let y = HZ + 4; y < H; y += 5 + (y - HZ) * 0.04) {
-    const w = 6 + (y - HZ) * 0.22 * (0.6 + q() * 0.8);
-    path += `<rect x="${(moon[0] - w / 2 + (q() - 0.5) * 10).toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="1.2" rx="0.6" fill="#f3e8cc" opacity="${(0.5 - (y - HZ) / H * 0.45).toFixed(2)}"/>`;
+  let glow = "";
+  for (let y = HZ + 3; y < H; y += 4 + (y - HZ) * 0.05) {
+    const w = 5 + (y - HZ) * 0.18 * (0.6 + q() * 0.8);
+    glow += `<rect x="${(moon[0] - w / 2 + (q() - 0.5) * 12).toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="1.1" rx="0.55" fill="#f3e8cc" opacity="${(0.42 - ((y - HZ) / (H - HZ)) * 0.34).toFixed(2)}"/>`;
   }
   let swell = "";
-  for (let i = 0; i < 46; i++) {
-    const x = q() * W, y = HZ + 8 + q() * (H - HZ - 8), w = 6 + q() * 16;
-    swell += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="0.8" rx="0.4" fill="#5d79a8" opacity="${(0.15 + q() * 0.25).toFixed(2)}"/>`;
+  for (let i = 0; i < 90; i++) {
+    const y = HZ + 6 + q() * (H - HZ - 6);
+    const x = q() * W, w = 5 + (y - HZ) * 0.08 + q() * 14;
+    swell += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="0.8" rx="0.4" fill="#5d79a8" opacity="${(0.12 + q() * 0.22).toFixed(2)}"/>`;
   }
-  back.push(path, swell);
+  back.push(glow, swell);
 
-  // ---- the floe: layered ice above the waterline, a snowy top, foam where it meets the sea
-  const strata = [-4, -8.5, -12].map((dz) => L(k.ringSeam(FLOE, GROUND + dz, P), { tone: "lo" })).join("");
-  const foam = L(k.ringSeam(FLOE, SEA + 1.2, P), { tone: "hi" });
-  back.push(wear(M.ice, S(k.extrude(FLOE, SEA, GROUND - SEA, P, { convex: false, bevel: 1.4 }), { tone: "mid", inner: strata + foam })));
-  back.push(wear(M.snow, L(k.onTop(FLOE.map(([x, y]) => [x * 0.95, y * 0.95]), GROUND, P, true), { tone: "faint" })));
-  rec(A.extruded(FLOE, SEA, GROUND - SEA, { name: "stand.floe" }));
-
-  // ---- the lagoon: the floe's inner cliff (the far side faces us) and the calm water inside
-  const inner = FLOE.map(([x, y], i) => { const wob = 1 + 0.03 * Math.sin(i * 1.7); return [x * LAGOON * wob, y * LAGOON * wob]; });
-  const VIEWER = [Math.cos((52 * Math.PI) / 180), Math.sin((52 * Math.PI) / 180)];
-  let walls = "";
-  for (let i = 0; i < inner.length; i++) {
-    const a = inner[i], b = inner[(i + 1) % inner.length];
-    const n = [-(b[1] - a[1]), b[0] - a[0]];          // inward normal for a counter-clockwise ring
-    const len = Math.hypot(n[0], n[1]) || 1;
-    const face = (n[0] * VIEWER[0] + n[1] * VIEWER[1]) / len;
-    if (face <= 0) continue;                           // only the far side of the cliff faces us
-    const tone = face > 0.75 ? 3 : face > 0.5 ? 2 : face > 0.25 ? 1 : 0;
-    walls += `<path class="iso-shade" data-shade="${tone}" d="${path3([[a[0], a[1], GROUND], [b[0], b[1], GROUND], [b[0], b[1], SEA], [a[0], a[1], SEA]], true)}"/>`;
+  // ---- the island: rock above the waterline, a snowy top, foam where the sea meets it
+  const strata = [-5, -10.5].map((dz) => L(k.ringSeam(ISLE, GROUND + dz, P), { tone: "lo" })).join("");
+  const foam = L(k.ringSeam(ISLE, SEA + 1.2, P), { tone: "hi" });
+  back.push(wear(M.rock, S(k.extrude(ISLE, SEA, GROUND - SEA - 3, P, { convex: false, bevel: 1.6 }), { tone: "mid", inner: strata + foam })));
+  const SNOW = ISLE.map(([x, y]) => [CW[0] + (x - CW[0]) * 0.985, CW[1] + (y - CW[1]) * 0.985]);
+  back.push(wear(M.snow, S(k.extrude(SNOW, GROUND - 3, 3, P, { convex: false, bevel: 1.2 }), { tone: "hi" })));
+  rec(A.extruded(ISLE, SEA, GROUND - SEA, { name: "stand.isle" }));
+  // boulders along the near shore, half in the sea
+  const qb = rng(41);
+  for (let i = 0; i < 9; i++) {
+    const a = Math.PI * (0.1 + 0.8 * (i / 8)) + (qb() - 0.5) * 0.1;      // the near half of the shore
+    const [x, y] = W2(ISLE_C[0] - ISLE_RX * 1.02 * Math.cos(a), ISLE_C[1] + ISLE_RY * 1.04 * Math.sin(a));
+    const rr = 6 + qb() * 7;
+    const c = [x, y, rr * 0.1];
+    put("boulder", c, wear(M.boulder, S(G.sphereOf(c, rr, P, { steps: 24 }), { tone: "mid" })), [rec(A.ball(c, rr, { name: "boulder", ground: true }))], -0.5);
   }
-  const lag = inner.map(([x, y]) => [x, y, SEA]);
-  const strataIn = [-4, -8.5, -12].map((dz) => k.pathOf(inner.map(([x, y]) => at([x, y, GROUND + dz])), true)).join("");
-  back.push(`<defs><radialGradient id="lagoon" cx="0.45" cy="0.45" r="0.6"><stop offset="0" stop-color="#22355f"/><stop offset="1" stop-color="#16244a"/></radialGradient></defs>`);
-  back.push(wear(M.ice, `<g>${walls}</g>` + `<path d="${strataIn}" fill="none" stroke="var(--anatomy-lo)" stroke-width="0.6" opacity="0.7"/>`));
-  back.push(`<path d="${path3(lag, true)}" fill="url(#lagoon)"/>`);
-  // the moon's path on the lagoon, and a few slow swells
-  const qq = rng(23);
-  let glint = "";
-  for (let i = 0; i < 26; i++) {
-    const u = qq(), v = qq();
-    const p0 = at([-120 + 240 * u, -150 + 260 * v, SEA]);
-    const w = 5 + qq() * 14;
-    glint += `<rect x="${(p0[0] - w / 2).toFixed(1)}" y="${p0[1].toFixed(1)}" width="${w.toFixed(1)}" height="0.8" rx="0.4" fill="#7f9ccc" opacity="${(0.12 + qq() * 0.2).toFixed(2)}"/>`;
-  }
-  back.push(`<clipPath id="lagclip"><path d="${path3(lag, true)}"/></clipPath><g clip-path="url(#lagclip)">${glint}</g>`);
-  back.push(wear(M.snow, L(k.pathOf(inner.map(([x, y]) => at([x, y, SEA + 1])), true), { tone: "hi" })));   // foam at the foot of the cliff
-  back.push(wear(M.snow, L(k.pathOf(inner.map(([x, y]) => at([x, y, GROUND])), true), { tone: "faint" })));  // the cliff's lip
 
-  // ---- torii: two posts, the nuki tie beam and the kasagi on top, facing the viewer
-  const across = G.unit3([-Math.sin((52 * Math.PI) / 180), Math.cos((52 * Math.PI) / 180), 0]);
-  const toward = G.unit3([Math.cos((52 * Math.PI) / 180), Math.sin((52 * Math.PI) / 180), 0]);
-  const T0 = [TORII[0], TORII[1], GROUND];
-  const legs = [-1, 1].map((s) => G.add3(T0, G.mul3(across, s * 46)));
-  for (const leg of legs.sort((a, b) => k.depthOf(a, P) - k.depthOf(b, P))) {
+  // ---- the shrine hall (haiden): stone base, wooden floor, vermilion pillars, plaster walls,
+  // lattice doors, a gabled copper roof with a ridge, katsuogi logs and crossed chigi
+  const [sx, sy] = SHRINE;
+  const u = SHRINE_SCALE;
+  const box = (name, mat, x, y, w, d, z, h, tone = "mid", inner = "", bias = 0) => {
+    const plan = { x: sx + x * u, y: sy + y * u, w: w * u, d: d * u, r: 0.6 };
+    put(name, [sx + (x + w / 2) * u, sy + (y + d / 2) * u, z + (h * u) / 2], wear(mat, S(k.slabOf(plan, z, h * u, P, 2, 0.4), { tone, inner })), [rec(A.slab(plan, z, h * u, { name }, 2))], bias);
+  };
+  const Z0 = GROUND;
+  box("shrine.base", M.plinth, -66, -42, 132, 84, Z0, 7);
+  box("shrine.floor", M.floor, -56, -34, 112, 68, Z0 + 7 * u, 4);
+  const ZF = Z0 + 11 * u, ZE = ZF + 34 * u;   // floor top, eaves
+  box("shrine.wall.back", M.plaster, -48, -28, 96, 3, ZF, 34);
+  box("shrine.wall.left", M.plaster, -48, -28, 3, 52, ZF, 34);
+  box("shrine.wall.right", M.plaster, 45, -28, 3, 52, ZF, 34, "mid", "", 0.2);
+  // the front: dark lattice doors between the pillars
+  const lattice = [];
+  for (let i = 1; i < 12; i++) lattice.push(path3([[sx + (-44 + i * 7.4) * u, sy + 24.2 * u, ZF + 3 * u], [sx + (-44 + i * 7.4) * u, sy + 24.2 * u, ZE - 6 * u]]));
+  for (let j = 1; j < 5; j++) lattice.push(path3([[sx - 44 * u, sy + 24.2 * u, ZF + (3 + j * 5.6) * u], [sx + 44 * u, sy + 24.2 * u, ZF + (3 + j * 5.6) * u]]));
+  box("shrine.doors", M.wood, -46, 21, 92, 3, ZF, 30, "mid", L(lattice.join(""), { tone: "lo" }), 0.3);
+  for (const x of [-48, -16, 16, 48]) for (const y of [-27, 26]) {
+    if (y < 0 && Math.abs(x) < 20) continue;
+    const c = [sx + x * u, sy + y * u];
+    put("shrine.pillar", [c[0], c[1], (ZF + ZE) / 2], wear(M.torii, S(k.cylinder(c[0], c[1], 2.8 * u, ZF, ZE - ZF, P, 20), { tone: "mid", crease: "none" })), [rec(A.cylinder(c[0], c[1], 2.8 * u, ZF, ZE - ZF, { name: "shrine.pillar" }))], 0.6);
+  }
+  // vermilion tie beams under the eaves, front and sides
+  box("shrine.beam.front", M.torii, -51, 25, 102, 3.6, ZE - 5 * u, 4, "mid", "", 0.7);
+  box("shrine.beam.left", M.torii, -51, -29, 3.6, 57, ZE - 5 * u, 4, "mid", "", 0.7);
+  box("shrine.beam.right", M.torii, 47.4, -29, 3.6, 57, ZE - 5 * u, 4, "mid", "", 0.7);
+  // steps up to the floor
+  for (let i = 0; i < 3; i++) box(`shrine.step:${i}`, M.plinth, -16, 42 + i * 7, 32, 7, Z0, 9 - i * 3, "mid", "", 0.1);
+  // the roof: a gable along x with deep eaves, then the ridge, katsuogi and chigi
+  const ROOF_H = 32 * u, EAVE = 48 * u, HALF = 66 * u;
+  const RF = G.frameOf([sx, sy, ZE], [1, 0, 0], [0, 1, 0], [0, 0, 1]);
+  const gable = [[-EAVE, -1.5], [EAVE, -1.5], [EAVE, 1.5], [3 * u, ROOF_H], [-3 * u, ROOF_H], [-EAVE, 1.5]];
+  const tiles = [];
+  for (let i = 1; i < 11; i++) {
+    const t = i / 11;
+    for (const sgn of [-1, 1]) tiles.push(path3([[sx - HALF, sy + sgn * EAVE * (1 - t), ZE + 1.5 + (ROOF_H - 1.5) * t], [sx + HALF, sy + sgn * EAVE * (1 - t), ZE + 1.5 + (ROOF_H - 1.5) * t]]));
+  }
+  put("shrine.roof", [sx, sy, ZE + ROOF_H / 2], wear(M.roof, S(G.prismOf(RF, gable, -HALF, HALF, P), { tone: "mid", inner: L(tiles.join(""), { tone: "lo" }) })), [rec(A.prism(RF, gable, -HALF, HALF, { name: "shrine.roof" }))], 1);
+  const ZR = ZE + ROOF_H;
+  const RB = G.frameOf([sx, sy, ZR], [1, 0, 0], [0, 1, 0], [0, 0, 1]);
+  const ridgeBar = [[-4.5 * u, -1], [4.5 * u, -1], [4.5 * u, 4.5 * u], [-4.5 * u, 4.5 * u]];
+  put("shrine.ridge", [sx, sy, ZR + 2], wear(M.ridge, S(G.prismOf(RB, ridgeBar, -HALF - 2, HALF + 2, P), { tone: "mid" })), [rec(A.prism(RB, ridgeBar, -HALF - 2, HALF + 2, { name: "shrine.ridge" }))], 1.2);
+  const oct = Array.from({ length: 8 }, (_, i) => [2.4 * u * Math.cos((i / 8) * Math.PI * 2), 2.4 * u * Math.sin((i / 8) * Math.PI * 2)]);
+  for (const x of [-40, -20, 0, 20, 40]) {
+    const KF = G.frameOf([sx + x * u, sy, ZR + 6.9 * u], [0, 1, 0], [1, 0, 0], [0, 0, 1]);
+    put("shrine.katsuogi", [sx + x * u, sy, ZR + 7 * u], wear(M.gold, S(G.prismOf(KF, oct, -9 * u, 9 * u, P), { tone: "mid", crease: "none" })), [rec(A.prism(KF, oct, -9 * u, 9 * u, { name: "shrine.katsuogi" }))], 1.4);
+  }
+  for (const end of [-1, 1]) {
+    const CF = G.frameOf([sx + end * (HALF - 2), sy, ZR], [1, 0, 0], [0, 1, 0], [0, 0, 1]);
+    for (const sgn of [-1, 1]) {
+      const bar = [[sgn * 2 * u, -2], [sgn * 5.5 * u, -2], [-sgn * 9 * u, 22 * u], [-sgn * 12.5 * u, 22 * u]];
+      put("shrine.chigi", [sx + end * (HALF - 2), sy, ZR + 10 * u], wear(M.ridge, S(G.prismOf(CF, bar, -1.2 * u, 1.2 * u, P), { tone: "mid" })), [rec(A.prism(CF, bar, -1.2 * u, 1.2 * u, { name: "shrine.chigi" }))], 1.5);
+    }
+  }
+  // the shimenawa: a thick straw rope sagging across the front, with zigzag paper shide
+  const rope = G.fillet([[sx - 30 * u, sy + 27.5 * u, ZE - 7 * u], [sx, sy + 27.5 * u, ZE - 12 * u], [sx + 30 * u, sy + 27.5 * u, ZE - 7 * u]], 30 * u, 10);
+  put("shrine.rope", [sx, sy + 27.5 * u, ZE - 10 * u], tubePieces(rope, () => 1.7 * u, P, { maxLength: 400 }).map((p) => wear(M.straw, tubeSvg(p, { tone: "mid" }))).join(""), [rec(A.tube(rope, 1.7 * u, { name: "shrine.rope" }))], 0.9);
+  for (const x of [-16, 0, 16]) {
+    const top = [sx + x * u, sy + 28.5 * u, ZE - (11 - Math.abs(x) * 0.12) * u];
+    const zig = [top, [top[0] + 1.6 * u, top[1], top[2] - 3 * u], [top[0] - 1.2 * u, top[1], top[2] - 6 * u], [top[0] + 1.6 * u, top[1], top[2] - 9 * u], [top[0] - 0.6 * u, top[1], top[2] - 12 * u]];
+    put("shrine.shide", G.add3(top, [0, 0, -6 * u]), `<path d="${path3(zig)}" fill="none" stroke="#f1ede2" stroke-width="1.4" stroke-linejoin="bevel"/>`, [rec(A.tube(zig, 0.7, { name: "shrine.shide" }))], 1);
+  }
+  // paper lanterns hanging from the front corners of the eaves
+  for (const x of [-42, 42]) {
+    const topP = [sx + x * u, sy + 30 * u, ZE - 3 * u];
+    const F = zUp(G.add3(topP, [0, 0, -18 * u]));
+    const shape = [[0, 0.8], [0.5, 3, 1], [2.6, 4.8, 1], [6, 5.4, 1], [9.4, 4.8, 1], [11.5, 3, 1], [12, 0.8]].map(([a, b, f]) => (f ? [a * u, b * u, f] : [a * u, b * u]));
+    const ribs = [2.6, 4.8, 7, 9.2].map((sv) => G.arcOf(F, sv * u, 5.2 * u, P)).join("");
+    put("chochin", G.add3(F.o, [0, 0, 6 * u]), L(path3([topP, G.add3(topP, [0, 0, -6 * u])]), { tone: "lo" }) +
+      wear(M.paper, S(G.solidOf(shape, F, P, { steps: 28 }), { tone: "hi", lit: true, inner: L(ribs, { tone: "lo" }) })),
+      [rec(A.solid(F, shape, { name: "chochin" }))], 1.1);
+    lights.push({ at: at(G.add3(F.o, [0, 0, 6 * u])), r: 14 * u, color: "#ffb35c" });
+  }
+
+  // ---- the great torii standing in the sea, foam at its feet
+  const T0 = [TORII[0], TORII[1], SEA];
+  const legs = [-1, 1].map((s) => G.add3(T0, G.mul3(ACROSS, s * 50)));
+  for (const leg of legs) {
     const F = zUp(leg);
-    put("torii.leg", G.add3(leg, [0, 0, 60]), wear(M.torii, S(G.solidOf([[0, 8], [3, 8], [3, 6.4], [110, 5.4]], F, P, { steps: 32 }), { tone: "mid" })),
-      [rec(A.solid(F, [[0, 8], [3, 8], [3, 6.4], [110, 5.4]], { name: "stand.torii" }))], 0);
+    const prof = [[0, 8.6], [4, 8.6], [4, 7], [118, 5.8]];
+    const ring = Array.from({ length: 33 }, (_, i) => { const a = (i / 32) * Math.PI * 2; return [leg[0] + 11 * Math.cos(a), leg[1] + 11 * Math.sin(a), SEA + 0.4]; });
+    put("torii.leg", G.add3(leg, [0, 0, 60]), `<path d="${path3(ring, true)}" fill="none" stroke="#dbe8ff" stroke-width="0.9" opacity="0.6"/>` +
+      wear(M.torii, S(G.solidOf(prof, F, P, { steps: 32 }), { tone: "mid" })), [rec(A.solid(F, prof, { name: "torii.leg", ground: true }))], 0);
   }
   const beam = (z, half, depth, h, mat, name, bias) => {
-    const F = G.frameOf(G.add3(T0, [0, 0, z]), across, toward, [0, 0, 1]);
+    const F = G.frameOf(G.add3(T0, [0, 0, z]), ACROSS, TOWARD3, [0, 0, 1]);
     const poly = [[-depth / 2, 0], [depth / 2, 0], [depth / 2, h], [-depth / 2, h]];
     put(name, G.add3(T0, [0, 0, z + h / 2]), wear(mat, S(G.prismOf(F, poly, -half, half, P), { tone: "mid" })), [rec(A.prism(F, poly, -half, half, { name }))], bias);
   };
-  beam(84, 58, 7, 6, M.torii, "torii.nuki", 0.5);
-  beam(104, 66, 9, 5, M.torii, "torii.shimaki", 0.6);
-  beam(109, 74, 10, 4.5, M.toriiTop, "torii.kasagi", 0.7);
-  // a tablet between the beams, and two paper lanterns hanging from the nuki
-  const tab = G.frameOf(G.add3(T0, [0, 0, 90]), across, toward, [0, 0, 1]);
-  put("torii.gakuzuka", G.add3(T0, [0, 0, 97]), wear(M.toriiTop, S(G.prismOf(tab, [[-3, 0], [3, 0], [3, 14], [-3, 14]], -7, 7, P), { tone: "mid" })), [], 0.8);
-  const lights = [];
-  for (const s of [-1, 1]) {
-    const top = G.add3(T0, G.add3(G.mul3(across, s * 24), [0, 0, 84]));
-    const F = zUp(G.add3(top, [0, 0, -26]));
-    const shape = [[0, 0.8], [0.5, 3.4, 1], [3, 5.6, 1], [7, 6.4, 1], [11, 5.6, 1], [13.5, 3.4, 1], [14, 0.8]];
-    const ribs = [3, 5.5, 8, 10.5].map((sv) => G.arcOf(F, sv, 6.1, P)).join("");
-    put("chochin", G.add3(top, [0, 0, -18]), L(path3([top, G.add3(top, [0, 0, -12])]), { tone: "lo" }) +
-      wear(M.paper, S(G.solidOf(shape, F, P, { steps: 32 }), { tone: "hi", lit: true, inner: L(ribs, { tone: "lo" }) })) +
-      wear(M.toriiTop, S(G.disc(14, 15.5, 2.2, F, P, { steps: 16 }), { tone: "mid" }) + S(G.disc(-1.5, 0, 2.2, F, P, { steps: 16 }), { tone: "mid" })),
-      [], 1);
-    lights.push({ at: at(G.add3(F.o, [0, 0, 7])), r: 16, color: "#ffb35c" });
-  }
+  beam(90, 62, 7.5, 6.5, M.torii, "torii.nuki", 0.5);
+  beam(112, 72, 9.5, 5.5, M.torii, "torii.shimaki", 0.6);
+  beam(117.5, 82, 10.5, 5, M.toriiTop, "torii.kasagi", 0.7);
+  const tabPoly = [[-3, 0], [3, 0], [3, 15.5], [-3, 15.5]];
+  const tab = G.frameOf(G.add3(T0, [0, 0, 96.5]), ACROSS, TOWARD3, [0, 0, 1]);
+  put("torii.gakuzuka", G.add3(T0, [0, 0, 104]), wear(M.toriiTop, S(G.prismOf(tab, tabPoly, -7.5, 7.5, P), { tone: "mid" })),
+    [rec(A.prism(tab, tabPoly, -7.5, 7.5, { name: "torii.gakuzuka" }))], 0.8);
 
-  // ---- trees: a pine at the left, a maple at the right
+  // ---- trees: a snowy pine at the left end of the island, a red maple at the right
   const tree = (base, mat, pads, name) => {
     const route = G.fillet([[base[0], base[1], GROUND], [base[0] + 4, base[1] - 6, GROUND + 36], [base[0] - 10, base[1] + 4, GROUND + 70], [base[0] - 2, base[1] - 2, GROUND + 100]], 14, 8);
     tubePieces(route, (u) => 7 - 4 * u, P, { maxLength: 30 }).forEach((p, i) => put(`${name}.trunk:${i}`, p.mid, wear(M.bark, tubeSvg(p, { tone: "mid" })), [], -1));
@@ -202,28 +268,30 @@ export function sceneSvg() {
   tree(PINE, M.pine, [[-24, 14, 52, 28], [20, -10, 76, 22], [-8, 6, 98, 16]], "pine");
   tree(MAPLE, M.maple, [[-18, 20, 48, 26], [20, -14, 68, 24], [-4, 4, 88, 18]], "maple");
 
-  // ---- stone lanterns beside the deck, their windows lit
-  const toro = (x, y) => {
+  // ---- stone lanterns: two by the shrine steps, two along the shore, their windows lit
+  const toro = (x, y, s = 1) => {
     const z = GROUND;
-    put("toro.base", [x, y, z + 2], wear(M.stone, S(k.cylinder(x, y, 9, z, 4, P, 32, 0.4), { tone: "mid" })), [rec(A.cylinder(x, y, 9, z, 4, { name: "toro.base" }))]);
-    put("toro.post", [x, y, z + 16], wear(M.stone, S(k.cylinder(x, y, 3.6, z + 4, 22, P, 20), { tone: "mid", crease: "none" })), [rec(A.cylinder(x, y, 3.6, z + 4, 22, { name: "toro.post" }))]);
-    const deck = { x: x - 9, y: y - 9, w: 18, d: 18, r: 1.5 };
-    put("toro.deck", [x, y, z + 27.5], wear(M.stone, S(k.slabOf(deck, z + 26, 3, P, 3, 0.4), { tone: "mid" })), [rec(A.slab(deck, z + 26, 3, { name: "toro.deck" }, 3))]);
-    const box = { x: x - 6.5, y: y - 6.5, w: 13, d: 13, r: 0.8 };
-    const z0 = z + 29, z1 = z0 + 12;
+    put("toro.base", [x, y, z + 2], wear(M.stone, S(k.cylinder(x, y, 9 * s, z, 4 * s, P, 32, 0.4), { tone: "mid" })), [rec(A.cylinder(x, y, 9 * s, z, 4 * s, { name: "toro.base" }))]);
+    put("toro.post", [x, y, z + 16 * s], wear(M.stone, S(k.cylinder(x, y, 3.6 * s, z + 4 * s, 22 * s, P, 20), { tone: "mid", crease: "none" })), [rec(A.cylinder(x, y, 3.6 * s, z + 4 * s, 22 * s, { name: "toro.post" }))]);
+    const deck = { x: x - 9 * s, y: y - 9 * s, w: 18 * s, d: 18 * s, r: 1.5 };
+    put("toro.deck", [x, y, z + 27.5 * s], wear(M.stone, S(k.slabOf(deck, z + 26 * s, 3 * s, P, 3, 0.4), { tone: "mid" })), [rec(A.slab(deck, z + 26 * s, 3 * s, { name: "toro.deck" }, 3))]);
+    const bx = { x: x - 6.5 * s, y: y - 6.5 * s, w: 13 * s, d: 13 * s, r: 0.8 };
+    const z0 = z + 29 * s, z1 = z0 + 12 * s;
     const win = (pts) => `<path class="sg-lamp" d="${path3(pts, true)}"/>` + L(path3(pts, true), { tone: "lo" });
-    const front = [[x - 3.4, y + 6.5, z0 + 2], [x + 3.4, y + 6.5, z0 + 2], [x + 3.4, y + 6.5, z1 - 2], [x - 3.4, y + 6.5, z1 - 2]];
-    const side = [[x + 6.5, y + 3.4, z0 + 2], [x + 6.5, y - 3.4, z0 + 2], [x + 6.5, y - 3.4, z1 - 2], [x + 6.5, y + 3.4, z1 - 2]];
-    put("toro.box", [x, y, (z0 + z1) / 2], wear(M.stone, S(k.slabOf(box, z0, 12, P, 2), { tone: "mid" }) + win(front) + win(side)), [rec(A.slab(box, z0, 12, { name: "toro.box" }, 2))]);
+    const front = [[x - 3.4 * s, y + 6.5 * s, z0 + 2 * s], [x + 3.4 * s, y + 6.5 * s, z0 + 2 * s], [x + 3.4 * s, y + 6.5 * s, z1 - 2 * s], [x - 3.4 * s, y + 6.5 * s, z1 - 2 * s]];
+    const side = [[x + 6.5 * s, y + 3.4 * s, z0 + 2 * s], [x + 6.5 * s, y - 3.4 * s, z0 + 2 * s], [x + 6.5 * s, y - 3.4 * s, z1 - 2 * s], [x + 6.5 * s, y + 3.4 * s, z1 - 2 * s]];
+    put("toro.box", [x, y, (z0 + z1) / 2], wear(M.stone, S(k.slabOf(bx, z0, 12 * s, P, 2), { tone: "mid" }) + win(front) + win(side)), [rec(A.slab(bx, z0, 12 * s, { name: "toro.box" }, 2))]);
     const FR = zUp([x, y, z1]);
-    const roof = [[0, 13], [1.4, 13], [2.8, 10.6, 1], [6, 6, 1], [9, 2.2, 1], [9.8, 0]];
-    put("toro.roof", [x, y, z1 + 4], wear(M.stone, S(G.solidOf(roof, FR, P), { tone: "mid" })), [rec(A.solid(FR, roof, { name: "toro.roof" }))]);
-    const tip = [x, y, z1 + 11.6];
-    put("toro.tip", tip, wear(M.stone, S(G.sphereOf(tip, 2.2, P, { steps: 24 }), { tone: "mid" })), [rec(A.ball(tip, 2.2, { name: "toro.tip" }))], 0.2);
-    lights.push({ at: at([x, y, (z0 + z1) / 2]), r: 22, color: "#ffc978" });
+    const roof = [[0, 13 * s], [1.4 * s, 13 * s], [2.8 * s, 10.6 * s, 1], [6 * s, 6 * s, 1], [9 * s, 2.2 * s, 1], [9.8 * s, 0]];
+    put("toro.roof", [x, y, z1 + 4 * s], wear(M.stone, S(G.solidOf(roof, FR, P), { tone: "mid" })), [rec(A.solid(FR, roof, { name: "toro.roof" }))]);
+    const tip = [x, y, z1 + 11.6 * s];
+    put("toro.tip", tip, wear(M.stone, S(G.sphereOf(tip, 2.2 * s, P, { steps: 24 }), { tone: "mid" })), [rec(A.ball(tip, 2.2 * s, { name: "toro.tip" }))], 0.2);
+    lights.push({ at: at([x, y, (z0 + z1) / 2]), r: 20 * s, color: "#ffc978" });
   };
-  toro(...onRing(168, 0.87));
-  toro(...onRing(-104, 0.87));
+  toro(sx - 46 * SHRINE_SCALE, sy + 64 * SHRINE_SCALE, 0.9);
+  toro(sx + 46 * SHRINE_SCALE, sy + 64 * SHRINE_SCALE, 0.9);
+  toro(...W2(-235, -275));
+  toro(...W2(245, -280));
 
   A.settle(R, P);
   R.items.sort((a, b) => a.key - b.key);
@@ -232,44 +300,30 @@ export function sceneSvg() {
   // ---- layout for the app
   const sageScale = P.scale / SAGE_P.scale;
   const sageSize = SAGE_VIEW * sageScale;              // sprite edge, in scene units (pt)
-  const origin = k.iso([0, 0, 0], SAGE_P);              // the sage's world origin in its sprite
-  const front = (52 * Math.PI) / 180;
-  // seats on an ellipse stretched across the screen (wide left-right, shallow front-back),
-  // turned so no seat hides the pond, and kept on the deck
-  const ACROSS = [-Math.sin(front), Math.cos(front)], TOWARD = [Math.cos(front), Math.sin(front)];
-  // riders in the lagoon: a row across it (two rows for a crowd), staggered a little front-back
-  const place = (u, v) => {
-    const w = [u * ACROSS[0] + v * TOWARD[0], u * ACROSS[1] + v * TOWARD[1], SEA];
-    const s = at(w);
-    return { x: s[0] / W, y: s[1] / H, depth: k.depthOf(w, P) };
-  };
-  const seatsFor = (n) => {
-    // one zigzag line across the lagoon (alternately forward and back), two lines for a crowd
-    const line = (k, v, span) => Array.from({ length: k }, (_, i) => {
-      const gap = k > 1 ? Math.min(140, span / (k - 1)) : 0;
-      return place((i - (k - 1) / 2) * gap, v + (k > 1 ? (i % 2 ? 44 : -18) : 0));
-    });
-    if (n <= 5) return line(n, n <= 3 ? 30 : 20, n <= 3 ? 280 : 360);
-    const back = Math.ceil(n / 2);
-    return [...line(back, -60, 360), ...line(n - back, 100, 340)];
-  };
+  const frac = ([x, y]) => ({ x: x / W, y: y / H });
+  // open water: below the island's shore and the torii's feet, to the bottom of the picture
+  const shore = Math.max(...ISLE.map(([x, y]) => at([x, y, SEA])[1]), ...legs.map((l) => at(l)[1]));
+  const ocean = { top: (shore + 10) / H, bottom: 1, left: 0, right: 1 };
+  // moorings for hosts that are asleep: in the shallows along the shore, either side of the torii
+  const docks = [-0.36, 0.3, -0.18, 0.42, 0.12, -0.42, 0.2, -0.28, 0.36, -0.08].map((u, i) => frac([W * (0.5 + u), shore + 16 + (i % 2) * 10]));
+  // where a host that needs you comes to wait: front and centre (a row when there are several)
+  const calls = [0, -0.22, 0.22, -0.4, 0.4].map((u) => frac([W * (0.5 + u), H * 0.8]));
   const layout = {
     width: W, height: H,
-    sage: { size: sageSize / W, anchorX: origin[0] / SAGE_VIEW, anchorY: origin[1] / SAGE_VIEW, ...MARKS },
-    // sprite scale by host count (crowded decks get smaller sages)
-    scale: Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i + 1, i + 1 >= 6 ? 0.7 : i + 1 >= 4 ? 0.8 : 1])),
-    pond: { x: at([0, -150, SEA])[0] / W, y: at([0, -150, SEA])[1] / H, rx: (40 * P.scale) / W },
+    sage: { size: sageSize / W, ...MARKS },
+    sageBack: { size: sageSize / W, ...BACK.MARKS },
+    // sprite scale by host count: riders are drawn larger than true scale so they read at a
+    // glance (the island is far off), and a crowded sea gets smaller ones
+    scale: Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i + 1, i + 1 >= 7 ? 1.05 : i + 1 >= 4 ? 1.25 : 1.5])),
     lights: lights.map((l) => ({ x: l.at[0] / W, y: l.at[1] / H, r: l.r / W, color: l.color })),
-    // the lagoon's water on screen (an ellipse's centre and radii), for drifting glints
-    lagoon: (() => {
-      const pts = FLOE.map(([x, y]) => at([x * LAGOON, y * LAGOON, SEA]));
-      const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
-      const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
-      return { x: cx / W, y: cy / H, rx: (Math.max(...xs) - Math.min(...xs)) / 2 / W, ry: (Math.max(...ys) - Math.min(...ys)) / 2 / H };
-    })(),
-    // open sea in front of the floe, where the orca fins swim (fractions of the picture)
-    sea: (() => { const lowest = Math.max(...FLOE.map(([x, y]) => at([x, y, SEA])[1])); return { top: Math.min(0.97, (lowest + 6) / H), bottom: 1 }; })(),
-    seats: Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i + 1, seatsFor(i + 1)])),
+    ocean,
+    docks,
+    calls,
+    horizon: HZ / H,
+    // older Floe builds read these
+    pond: { ...frac([W * 0.5, (shore + H) / 2]), rx: 0.04 },
+    sea: { top: ocean.top, bottom: 1 },
+    seats: Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i + 1, docks.slice(0, i + 1).map((d) => ({ ...d, depth: d.y }))])),
   };
   return { svg, layout, R };
 }

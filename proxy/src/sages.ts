@@ -42,10 +42,14 @@ export class Sages {
     mkdirSync(CACHE, { recursive: true });
   }
 
-  /** The grid layout, for the app: "idle:8:3.2,working:20:2,…;cell=192;cols=20". */
+  /**
+   * The grid layout, for the app: "idle:8:3.2,working:20:2,…,back.idle:8:3.2,…;cell=192;cols=20".
+   * One row per state seen from the front, then the same rows seen from behind ("back.").
+   */
   async layout(): Promise<string> {
     const S = await sage();
-    return `${S.STATES.map(([n, f, s]) => `${n}:${f}:${s}`).join(",")};cell=192;cols=${S.COLS}`;
+    const rows = [...S.STATES, ...S.STATES.map(([n, f, s]) => [`back.${n}`, f, s] as const)];
+    return `${rows.map(([n, f, s]) => `${n}:${f}:${s}`).join(",")};cell=192;cols=${S.COLS}`;
   }
 
   private async salts(): Promise<Map<string, number>> {

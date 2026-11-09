@@ -17,7 +17,7 @@ import * as A from "./kit/audit.mjs";
 import { tubePieces, tubeSvg } from "./kit/tube.mjs";
 import { ROBES, LACQUERS, paletteOf } from "./palette.mjs";
 
-export const VERSION = 2;
+export const VERSION = 3;
 /** [state, frames, seconds per loop] — rows of the sprite sheet, in this order. */
 export const STATES = [
   ["idle", 8, 3.2],
@@ -103,11 +103,16 @@ const orcaSlope = (s) => { const t = clamp(s / ORCA_L, 1e-3, 1 - 1e-3); return (
 const sOf = (y) => y - Y_TAIL;
 const backAt = (y) => ZC + orcaR(sOf(y));    // the top of the orca's back at y
 
+// The camera's azimuth. 52 shows the rider from the front (the orca heads down-left on screen);
+// import "./sage.mjs?az=232" for the same rider from behind (heading up-right), so Floe can
+// let it swim every way (the other two headings are these two mirrored).
+export const AZIMUTH = Number(new URL(import.meta.url).searchParams.get("az") ?? 52);
+const VIEWER = [Math.cos((AZIMUTH * Math.PI) / 180), Math.sin((AZIMUTH * Math.PI) / 180)];
 const P = k.fitProjection(
   [...k.boxCorners({ x: -66, y: Y_TAIL - 46, w: 132, d: -Y_TAIL + 46 + 82, r: 0 }, -2, 0), [0, -16, 112], [0, -58, 88], [25.5, -25.5, 74], [-40, 0, 60], [40, 0, 50]],
   VIEW,
   VIEW,
-  { pad: 4, azimuth: 52 },
+  { pad: 4, azimuth: AZIMUTH },
 );
 export const PROJECTION = P;
 const V = G.viewOf(P);
@@ -162,7 +167,7 @@ export const MARKS = (() => {
   // the orca's heading on screen (unit vector, SVG axes: y down), for Floe's swim animation
   const o = k.iso([0, 0, 0], P), f = k.iso([0, 10, 0], P);
   const len = Math.hypot(f[0] - o[0], f[1] - o[1]);
-  return { headX: head[0] / VIEW, headY: head[1] / VIEW, labelX: nose[0] / VIEW, labelY: nose[1] / VIEW, headingX: (f[0] - o[0]) / len, headingY: (f[1] - o[1]) / len };
+  return { anchorX: o[0] / VIEW, anchorY: o[1] / VIEW, headX: head[0] / VIEW, headY: head[1] / VIEW, labelX: nose[0] / VIEW, labelY: nose[1] / VIEW, headingX: (f[0] - o[0]) / len, headingY: (f[1] - o[1]) / len };
 })();
 
 // ---------------------------------------------------------------- frame
@@ -441,23 +446,37 @@ function mount(T, out, put, rec, state, t, uid) {
 
   // the near water surface, over whatever is below the waterline on the side facing us
   const wl = [];
+  const FAR_END = 0.9;
   for (let i = 0; i <= 60; i++) {
     const sv = 1 + (i / 60) * (ORCA_L - 1.5);
     const r = orcaR(sv);
     if (r <= ZC) continue;
-    wl.push(G.pointOf(F, sv, r, -Math.asin(ZC / r)));
+    if (VIEWER[1] < 0 && sv > ORCA_L * FAR_END) continue;   // from behind, the nose is the far end: hidden by the head
+    // on whichever flank faces the camera (+x from the front, -x from behind)
+    wl.push(G.pointOf(F, sv, r, VIEWER[0] >= 0 ? -Math.asin(ZC / r) : Math.PI + Math.asin(ZC / r)));
   }
   // down to the body's underside at each ring, so the surface covers only what is submerged
-  const deep = wl.map((p) => { const sv = p[1] - Y_TAIL; return [p[0] + 1.5, p[1] + 1.5, -(orcaR(sv) - ZC) - 2]; }).reverse();
+  const deep = wl.map((p) => { const sv = p[1] - Y_TAIL; return [p[0] + 1.5 * Math.sign(VIEWER[0]), p[1] + 1.5 * Math.sign(VIEWER[1]), -(orcaR(sv) - ZC) - 2]; }).reverse();
   const foamPts = wl.map(at);
   // its true shape is the patch of water plane in front of the waterline that hides the
   // submerged body: each deep point seen through the surface lands d·cot(30°) nearer the viewer
-  const look = [Math.cos((52 * Math.PI) / 180), Math.sin((52 * Math.PI) / 180)];
+  const look = VIEWER;
   const lift = (p) => [p[0] - p[2] * Math.sqrt(3) * look[0], p[1] - p[2] * Math.sqrt(3) * look[1]];
-  const plane = [...wl.map((p) => [p[0], p[1]]), ...deep.map(lift)];
-  const waterShape = A.extruded(plane, -0.06, 0.06, { name: "water.front" });
-  put("water.front", [0, 70, -10], `<path d="${path3([...wl, ...deep], true)}" fill="#1b2c54" opacity="0.94"/>` +
-    `<path d="${k.pathOf(foamPts)}" fill="none" stroke="#dbe8ff" stroke-width="0.9" stroke-linecap="round" opacity="0.55"/>`, [waterShape], 0.2);
+  // In short lengths along the body, each ordered on its own: seen from behind, the water
+  // by the far (head) end lies behind the nearer, dry middle of the body, while further back
+  // it covers the submerged flank, so one patch can't be both. Neighbours overlap by a ring.
+  const down = [...deep].reverse();     // deep[i] under wl[i]
+  const PIECES = 10;
+  const cut = (j) => Math.round((j / PIECES) * (wl.length - 1));
+  for (let j = 0; j < PIECES; j++) {
+    const i0 = Math.max(0, cut(j) - (j ? 1 : 0)), i1 = cut(j + 1);
+    const top = wl.slice(i0, i1 + 1), under = down.slice(i0, i1 + 1).reverse();
+    const plane = [...top.map((p) => [p[0], p[1]]), ...under.map(lift)];
+    const shape = A.extruded(plane, -0.06, 0.06, { name: `water.front:${j}` });
+    const mid = top[Math.floor(top.length / 2)];
+    put(`water.front:${j}`, [mid[0], mid[1], -6], `<path d="${path3([...top, ...under], true)}" fill="#1b2c54" opacity="0.94"/>` +
+      `<path d="${k.pathOf(foamPts.slice(i0, i1 + 1))}" fill="none" stroke="#dbe8ff" stroke-width="0.9" stroke-linecap="round" opacity="0.55"/>`, [shape], 0.2);
+  }
 }
 
 /** The host's initials on a brass plate, screwed to the board's front edge. */

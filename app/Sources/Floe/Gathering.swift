@@ -1,12 +1,12 @@
 import AppKit
 import SwiftUI
 
-// The gathering: every host's karakuri sage on one ice floe, no scrolling. The floe is a
-// picture the proxy renders once with the anatomy kit, in the same camera as the sages, and
-// it says where each seat is; the sages stand on the deck at true scale, nearest drawn last.
-// Over the picture, Core Animation adds the live parts: the pond ripples while agents run,
-// the lanterns breathe, fireflies drift, and orca fins pass in the sea. Tap a sage to open
-// its host.
+// The gathering: every host's karakuri sage riding its orca in the sea before the shrine
+// island. The island and the sea are a picture the proxy renders once with the anatomy kit, in
+// the same camera as the sages, with a layout that says where the open water is. Over it, the
+// pod (Pod.swift) swims the riders, and Core Animation adds the rest of the life: lantern
+// light that breathes, fireflies over the island, moonlight glinting on the moving sea. Tap a
+// rider to open its host.
 
 struct SceneLayout: Decodable {
     struct Sage: Decodable {
@@ -20,14 +20,25 @@ struct SceneLayout: Decodable {
     struct Light: Decodable { let x: Double; let y: Double; let r: Double; let color: String }
     struct Seat: Decodable { let x: Double; let y: Double; let depth: Double }
     struct Sea: Decodable { let top: Double; let bottom: Double }
+    struct Ocean: Decodable { let top: Double; let bottom: Double; let left: Double; let right: Double }
+    struct Spot: Decodable { let x: Double; let y: Double }
     let width: Double
     let height: Double
+    /// The rider seen from the front, and from behind (the sheet's "back." rows).
     let sage: Sage
-    let pond: Pond
+    let sageBack: Sage?
     let lights: [Light]
-    let sea: Sea
-    let seats: [String: [Seat]]
     let scale: [String: Double]?
+    /// The open water the riders swim in, the moorings for sleeping hosts, and where a host
+    /// that needs you comes to wait (fractions of the picture).
+    let ocean: Ocean?
+    let docks: [Spot]?
+    let calls: [Spot]?
+    let horizon: Double?
+    // the lagoon scene's layout (before the riders swam)
+    let pond: Pond?
+    let sea: Sea?
+    let seats: [String: [Seat]]?
     let lagoon: Lagoon?
 }
 
@@ -83,7 +94,6 @@ struct GatheringView: View {
             let attention = store.attentionAgents.count
             ZStack(alignment: .topLeading) {
                 if let img = scene.image, let layout = scene.layout {
-                    let fit = SceneFit(layout, g.size)
                     Image(nsImage: img)
                         .resizable()
                         .interpolation(.high)
@@ -93,8 +103,9 @@ struct GatheringView: View {
                     SceneLife(layout: layout, size: g.size)
                         .frame(width: g.size.width, height: g.size.height)
                         .allowsHitTesting(false)
-                    pond(layout, fit, working: working, attention: attention)
-                    seats(layout, fit)
+                    Pod(riders: riders, layout: layout, size: g.size) { id in store.push(.host(id)) }
+                        .frame(width: g.size.width, height: g.size.height)
+                    status(working: working, attention: attention)
                 } else {
                     LinearGradient(colors: [Color(red: 0.04, green: 0.06, blue: 0.13), Color(red: 0.02, green: 0.03, blue: 0.06)], startPoint: .top, endPoint: .bottom)
                     HStack(spacing: 8) {
@@ -111,23 +122,24 @@ struct GatheringView: View {
         .padding(.bottom, 4)
     }
 
-    @ViewBuilder
-    private func pond(_ layout: SceneLayout, _ fit: SceneFit, working: Int, attention: Int) -> some View {
-        let c = fit.point(layout.pond.x, layout.pond.y)
-        let rx = fit.length(layout.pond.rx)
-        if working + attention > 0 {
-            RippleRings(color: attention > 0 ? .orcaOrange : .orcaBlue)
-                .frame(width: rx * 2, height: rx)
-                .position(c)
-                .allowsHitTesting(false)
+    private var riders: [Pod.Rider] {
+        store.hosts.prefix(10).map { h in
+            Pod.Rider(id: h.id, name: h.name, subtitle: subtitle(h), online: h.online, mood: store.hostMood(h),
+                      badge: h.counts.attention > 0 ? "!" : h.counts.working > 0 ? "\(h.counts.working)" : nil,
+                      badgeAttention: h.counts.attention > 0)
         }
-        // the orca's fin in the pond, and what everyone is doing on a pill in the sky
-        OrcaGlyph()
-            .foregroundStyle(Color.white.opacity(0.92))
-            .frame(width: 18, height: 18)
-            .shadow(color: (attention > 0 ? Color.orcaOrange : working > 0 ? Color.orcaBlue : Color.white).opacity(0.9), radius: 6)
-            .position(x: c.x, y: c.y - 3)
-            .allowsHitTesting(false)
+    }
+
+    private func subtitle(_ h: HostView) -> String {
+        if !h.online { return "asleep" }
+        let n = h.projects.count, a = h.counts.agents
+        var bits = ["\(n) project\(n == 1 ? "" : "s")"]
+        if a > 0 { bits.append("\(a) agent\(a == 1 ? "" : "s")") }
+        return bits.joined(separator: " · ")
+    }
+
+    /// What everyone is doing, on a pill in the sky.
+    private func status(working: Int, attention: Int) -> some View {
         HStack(spacing: 5) {
             Circle().fill(attention > 0 ? Color.orcaOrange : working > 0 ? Color.orcaBlue : Color.white.opacity(0.5)).frame(width: 6, height: 6)
             Text(pondLine(working: working, attention: attention, hosts: store.hosts.count))
@@ -144,31 +156,10 @@ struct GatheringView: View {
         .allowsHitTesting(false)
     }
 
-    @ViewBuilder
-    private func seats(_ layout: SceneLayout, _ fit: SceneFit) -> some View {
-        let hosts = Array(store.hosts.prefix(10))
-        let seats = layout.seats["\(max(hosts.count, 1))"] ?? []
-        let size = fit.length(layout.sage.size) * (layout.scale?["\(max(hosts.count, 1))"] ?? 1)
-        let order = zip(hosts, seats).sorted { $0.1.depth < $1.1.depth }
-        // sprites nearest-last, then every name and badge above all of them, so none is hidden
-        ForEach(Array(order.enumerated()), id: \.element.0.id) { _, pair in
-            let p = fit.point(pair.1.x, pair.1.y)
-            FloeSeat(host: pair.0, size: size, anchorY: layout.sage.anchorY, marks: layout.sage, layer: .sprite)
-                .frame(width: size, height: size)
-                .position(x: p.x - (layout.sage.anchorX - 0.5) * size, y: p.y - (layout.sage.anchorY - 0.5) * size)
-        }
-        ForEach(Array(order.enumerated()), id: \.element.0.id) { _, pair in
-            let p = fit.point(pair.1.x, pair.1.y)
-            FloeSeat(host: pair.0, size: size, anchorY: layout.sage.anchorY, marks: layout.sage, layer: .labels)
-                .frame(width: size, height: size)
-                .position(x: p.x - (layout.sage.anchorX - 0.5) * size, y: p.y - (layout.sage.anchorY - 0.5) * size)
-        }
-    }
-
     private func pondLine(working: Int, attention: Int, hosts: Int) -> String {
         if attention > 0 { return "\(attention) agent\(attention == 1 ? "" : "s") need\(attention == 1 ? "s" : "") you" }
         if working > 0 { return "\(working) agent\(working == 1 ? "" : "s") at work" }
-        return "\(hosts) sage\(hosts == 1 ? "" : "s") resting"
+        return "\(hosts) sage\(hosts == 1 ? "" : "s") cruising"
     }
 }
 
@@ -244,8 +235,8 @@ struct FloeSeat: View {
     }
 }
 
-/// The live parts of the floe, all Core Animation: lantern light that breathes, fireflies
-/// over the deck, and orca fins passing in the sea in front of the floe.
+/// The live parts of the scene, all Core Animation: lantern light that breathes, fireflies
+/// over the island, and moonlight glinting on the moving sea.
 struct SceneLife: NSViewRepresentable {
     let layout: SceneLayout
     let size: CGSize
@@ -300,8 +291,9 @@ final class SceneLifeView: NSView {
             let flies = CAEmitterLayer()
             flies.frame = root.bounds
             flies.emitterShape = .rectangle
-            flies.emitterPosition = CGPoint(x: size.width / 2, y: size.height * 0.52)
-            flies.emitterSize = CGSize(width: size.width * 0.8, height: size.height * 0.4)
+            let isle = fit.point(0, ((layout.horizon ?? 0.3) + (layout.ocean?.top ?? 0.5)) / 2).y
+            flies.emitterPosition = CGPoint(x: size.width / 2, y: isle)
+            flies.emitterSize = CGSize(width: size.width * 0.9, height: size.height * 0.16)
             flies.renderMode = .additive
             let cell = CAEmitterCell()
             cell.contents = Self.dot
@@ -319,10 +311,10 @@ final class SceneLifeView: NSView {
             flies.emitterCells = [cell]
             root.addSublayer(flies)
 
-            // moonlit glints drifting across the lagoon and the open sea: the water is moving
+            // moonlight glinting on the moving sea, from the island's shore to the bottom
             let glint = CAEmitterCell()
             glint.contents = Self.glint
-            glint.birthRate = 7
+            glint.birthRate = 9
             glint.lifetime = 5
             glint.lifetimeRange = 2
             glint.velocity = 5
@@ -334,20 +326,7 @@ final class SceneLifeView: NSView {
             glint.alphaRange = 0.3
             glint.alphaSpeed = -0.1
             glint.color = NSColor(red: 0.72, green: 0.84, blue: 1, alpha: 0.55).cgColor
-            if let lag = layout.lagoon {
-                let c = fit.point(lag.x, lag.y), rx = fit.length(lag.rx) * 0.86, ry = lag.ry * layout.height * fit.scale * 0.8
-                let water = CAEmitterLayer()
-                water.frame = CGRect(x: c.x - rx, y: c.y - rx, width: rx * 2, height: rx * 2)
-                water.emitterShape = .circle
-                water.emitterMode = .surface
-                water.emitterPosition = CGPoint(x: rx, y: rx)
-                water.emitterSize = CGSize(width: rx * 2, height: rx * 2)
-                water.renderMode = .additive
-                water.emitterCells = [glint]
-                water.setAffineTransform(CGAffineTransform(scaleX: 1, y: ry / rx))   // a circle squashed to the lagoon's ellipse
-                root.addSublayer(water)
-            }
-            let seaTop = fit.point(0, layout.sea.top).y
+            let seaTop = fit.point(0, layout.ocean?.top ?? layout.sea?.top ?? 0.5).y
             if seaTop < size.height - 6 {
                 let sea = CAEmitterLayer()
                 sea.frame = CGRect(x: 0, y: seaTop, width: size.width, height: size.height - seaTop)
@@ -356,37 +335,8 @@ final class SceneLifeView: NSView {
                 sea.emitterPosition = CGPoint(x: size.width / 2, y: (size.height - seaTop) / 2)
                 sea.emitterSize = sea.bounds.size
                 sea.renderMode = .additive
-                let far = glint.copy() as! CAEmitterCell
-                far.birthRate = 4
-                sea.emitterCells = [far]
+                sea.emitterCells = [glint]
                 root.addSublayer(sea)
-            }
-
-            // a mother orca and her calf, passing left to right in the open sea, now and then
-            let seaY = fit.point(0, (layout.sea.top + layout.sea.bottom) / 2).y
-            for (i, scale) in [1.0, 0.62].enumerated() {
-                let fin = CALayer()
-                fin.contents = Self.fin
-                fin.bounds = CGRect(x: 0, y: 0, width: 16 * scale, height: 14 * scale)
-                fin.position = CGPoint(x: -30, y: min(size.height - 8, seaY + CGFloat(i) * 5))
-                fin.opacity = 0
-                root.addSublayer(fin)
-                let move = CAKeyframeAnimation(keyPath: "position.x")
-                move.values = [-30, size.width + 30]
-                let fade = CAKeyframeAnimation(keyPath: "opacity")
-                fade.values = [0, 0.95, 0.95, 0]
-                fade.keyTimes = [0, 0.12, 0.85, 1]
-                let bob = CAKeyframeAnimation(keyPath: "transform.translation.y")
-                bob.values = [0, 1.6, 0, 1.6, 0]
-                let swim = CAAnimationGroup()
-                swim.animations = [move, fade, bob]
-                swim.duration = 14
-                let cycle = CAAnimationGroup()
-                cycle.animations = [swim]
-                cycle.duration = 34
-                cycle.repeatCount = .infinity
-                cycle.beginTime = CACurrentMediaTime() + 3 + Double(i) * 1.1
-                fin.add(cycle, forKey: "swim")
             }
         }
     }
@@ -410,28 +360,6 @@ final class SceneLifeView: NSView {
         ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: 2), end: CGPoint(x: w, y: 2), options: [])
         return ctx.makeImage()
     }()
-
-    /// A dorsal fin: black with a moonlit edge and a little wake at its base.
-    private static let fin: CGImage? = {
-        let w = 32, h = 28
-        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        let p = CGMutablePath()
-        p.move(to: CGPoint(x: 6, y: 5))
-        p.addCurve(to: CGPoint(x: 20, y: 26), control1: CGPoint(x: 12, y: 10), control2: CGPoint(x: 15, y: 20))
-        p.addCurve(to: CGPoint(x: 26, y: 5), control1: CGPoint(x: 22, y: 18), control2: CGPoint(x: 22, y: 9))
-        p.closeSubpath()
-        ctx.addPath(p)
-        ctx.setFillColor(CGColor(red: 0.04, green: 0.05, blue: 0.08, alpha: 1))
-        ctx.fillPath()
-        ctx.addPath(p)
-        ctx.setStrokeColor(CGColor(red: 0.75, green: 0.82, blue: 0.95, alpha: 0.7))
-        ctx.setLineWidth(1.2)
-        ctx.strokePath()
-        ctx.setFillColor(CGColor(red: 0.75, green: 0.85, blue: 1, alpha: 0.45))
-        ctx.fillEllipse(in: CGRect(x: 1, y: 2, width: 30, height: 4))
-        return ctx.makeImage()
-    }()
 }
 
 extension NSColor {
@@ -441,70 +369,3 @@ extension NSColor {
         self.init(red: CGFloat((v >> 16) & 0xff) / 255, green: CGFloat((v >> 8) & 0xff) / 255, blue: CGFloat(v & 0xff) / 255, alpha: 1)
     }
 }
-
-struct RippleRings: NSViewRepresentable {
-    let color: Color
-
-    func makeNSView(context: Context) -> RippleView { RippleView() }
-    func updateNSView(_ v: RippleView, context: Context) { v.color = NSColor(color) }
-}
-
-final class RippleView: NSView {
-    private var rings: [CAShapeLayer] = []
-    var color: NSColor = .systemBlue {
-        didSet { rings.forEach { $0.strokeColor = color.withAlphaComponent(0.7).cgColor } }
-    }
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-        for _ in 0..<3 {
-            let r = CAShapeLayer()
-            r.fillColor = nil
-            r.lineWidth = 1.2
-            r.opacity = 0
-            layer?.addSublayer(r)
-            rings.append(r)
-        }
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func layout() {
-        super.layout()
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        for r in rings {
-            r.frame = bounds
-            r.path = CGPath(ellipseIn: bounds.insetBy(dx: 2, dy: 2), transform: nil)
-        }
-        CATransaction.commit()
-        start()
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        start()
-    }
-
-    private func start() {
-        guard window != nil else { return }
-        let now = CACurrentMediaTime()
-        for (i, r) in rings.enumerated() where r.animation(forKey: "ripple") == nil {
-            let scale = CABasicAnimation(keyPath: "transform.scale")
-            scale.fromValue = 0.55
-            scale.toValue = 1.15
-            let fade = CABasicAnimation(keyPath: "opacity")
-            fade.fromValue = 0.8
-            fade.toValue = 0
-            let g = CAAnimationGroup()
-            g.animations = [scale, fade]
-            g.duration = 3
-            g.repeatCount = .infinity
-            g.beginTime = now + Double(i)
-            g.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            r.add(g, forKey: "ripple")
-        }
-    }
-}
-

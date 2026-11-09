@@ -1,6 +1,7 @@
 // Build a host's karakuri sage: a preview card (anatomy plate) and/or the sprite sheet Floe plays.
 //   node build.mjs --id <host id> --name <host name> --kind local|environment|ssh [--salt n]
-//                  [--sheet out.png] [--preview out.html] [--audit]
+//                  [--sheet out.png] [--preview out.html [--back]] [--audit]
+// The sheet has one row per state seen from the front, then the same rows seen from behind.
 import { writeFileSync, mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,8 @@ import { spawnSync } from "node:child_process";
 import * as k from "./kit/iso-kit.mjs";
 import * as A from "./kit/audit.mjs";
 import { STATES, COLS, VIEW, SAGE_CSS, SOCKETS, traitsOf, frameSvg, describe, comboOf } from "./sage.mjs";
+// the same rider seen from behind (camera at 232°): the sheet's second half, so it can swim away from you
+const BACK = await import("./sage.mjs?az=232");
 
 const arg = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : fallback; };
 const host = { id: arg("id", "local"), name: arg("name", "This Mac"), kind: arg("kind", "local"), salt: Number(arg("salt", 0)) };
@@ -50,13 +53,14 @@ svg.iso-svg{width:${W}px!important;height:${H}px!important;max-width:none!import
 }
 
 const frames = Object.fromEntries(STATES.map(([state, n]) => [state, Array.from({ length: n }, (_, i) => frameSvg(T, state, i / n, `${state}${i}`))]));
+const backFrames = Object.fromEntries(STATES.map(([state, n]) => [state, Array.from({ length: n }, (_, i) => BACK.frameSvg(T, state, i / n, `b${state}${i}`))]));
 
 if (process.argv.includes("--audit")) {
   // every state at three moments of its loop
   let failed = 0;
-  for (const [state] of STATES) for (const t of [0, 0.35, 0.55]) {
-    const { R } = frameSvg(T, state, t, "audit");
-    console.log(`\n== ${state} @ ${t}`);
+  for (const [view, build] of [["front", frameSvg], ["back", BACK.frameSvg]]) for (const [state] of STATES) for (const t of [0, 0.35, 0.55]) {
+    const { R } = build(T, state, t, "audit");
+    console.log(`\n== ${view} · ${state} @ ${t}`);
     A.auditOrExit(R, undefined, { argv: ["--audit"], allow: SOCKETS, cover: ["spout", "water.front", "incense"] });   // effects with no solid: spray, the water surface, smoke
     if (process.exitCode) { failed++; process.exitCode = 0; }
   }
@@ -66,7 +70,7 @@ if (process.argv.includes("--audit")) {
 
 const sheetPath = arg("sheet");
 if (sheetPath) {
-  const cells = STATES.map(([state]) => frames[state].map((f) =>
+  const cells = [...STATES.map(([state]) => frames[state]), ...STATES.map(([state]) => backFrames[state])].map((row) => row.map((f) =>
     `<svg class="iso-svg" viewBox="0 0 ${VIEW} ${VIEW}" width="${CELL_PT}" height="${CELL_PT}">${f.svg}</svg>`).join("")).map((row) => `<div class="row">${row}</div>`).join("");
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>${k.ISO_CSS}${SAGE_CSS}
 html,body{margin:0;padding:0;background:transparent!important}
@@ -77,12 +81,12 @@ body.iso{--anatomy-weight:1.15px;background:transparent}
   const dir = mkdtempSync(join(tmpdir(), "floe-sage-"));
   const page = join(dir, "sheet.html");
   writeFileSync(page, html);
-  const w = COLS * CELL_PT, h = STATES.length * CELL_PT;
+  const w = COLS * CELL_PT, h = STATES.length * 2 * CELL_PT;
   const r = spawnSync(CHROME, ["--headless", "--disable-gpu", "--hide-scrollbars", "--default-background-color=00000000",
     "--force-device-scale-factor=2", `--window-size=${w},${h}`, `--screenshot=${sheetPath}`, `file://${page}`], { encoding: "utf8", timeout: 60000 });
   rmSync(dir, { recursive: true, force: true });
   if (r.status !== 0) { console.error(r.stderr); process.exit(1); }
-  console.log(JSON.stringify({ sheet: sheetPath, combo: comboOf(T), cols: COLS, cell: CELL_PT * 2, states: STATES }));
+  console.log(JSON.stringify({ sheet: sheetPath, combo: comboOf(T), cols: COLS, cell: CELL_PT * 2, states: STATES, views: ["front", "back"] }));
 }
 
 const previewPath = arg("preview");
@@ -98,9 +102,10 @@ if (previewPath) {
       { mark: "raised", label: `Seeded for ${host.name}: ${comboOf(T)}` },
     ],
     caption: describe(T),
-    body: `<div class="iso-stage sg-stage" tabindex="0" role="img">${big(frames.idle[0].svg)}</div>`,
+    body: `<div class="iso-stage sg-stage" tabindex="0" role="img">${big((process.argv.includes("--back") ? backFrames : frames).idle[0].svg)}</div>`,
   });
-  const data = Object.fromEntries(STATES.map(([state, n, secs]) => [state, { secs, frames: frames[state].map((f) => f.svg) }]));
+  const shown = process.argv.includes("--back") ? backFrames : frames;
+  const data = Object.fromEntries(STATES.map(([state, n, secs]) => [state, { secs, frames: shown[state].map((f) => f.svg) }]));
   const live = `
 const DATA = ${JSON.stringify(data)};
 const ORDER = ${JSON.stringify(STATES.map(([s]) => s))};
