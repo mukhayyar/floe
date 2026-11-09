@@ -120,6 +120,8 @@ function inputText(input: unknown): string | null {
   return String(i.command ?? i.file_path ?? i.path ?? i.pattern ?? i.query ?? i.url ?? i.description ?? JSON.stringify(i));
 }
 
+/** Orca's generic name for any prompt it reads off a screen. */
+const GENERIC = /^permission prompt$/i;
 const RANK: Record<string, number> = { waiting: 0, working: 1, done: 2, idle: 3 };
 
 export class OrcaWatcher {
@@ -275,10 +277,16 @@ export class OrcaWatcher {
     const facet = a.programStatus ?? {};
     const live = a.state === "working" || a.state === "waiting" || a.state === "blocked";
     let attention: string | null = null;
+    // Orca reads prompts off the screen (programStatus) as well as from the agent's hooks. A
+    // prompt can come up after the turn ended, with no hook (Claude holding a message from
+    // another session for approval): the row still says "done" or "idle", so trust a blocked
+    // screen whenever it was seen after the row last changed state.
+    const seenSince = typeof facet.observedAt === "number" && facet.observedAt >= (a.stateStartedAt ?? a.updatedAt ?? Infinity);
     if (a.state === "waiting" || a.state === "blocked") attention = facet.kind ?? (a.toolName === "AskUserQuestion" ? "question" : "input");
-    else if (facet.state === "blocked" && a.state === "working") attention = facet.kind ?? "input";
+    else if (facet.state === "blocked" && (a.state === "working" || seenSince)) attention = facet.kind ?? "input";
     const input = inputText(a.toolInput);
-    const detail = live ? (facet.message ?? (a.toolName ? `${a.toolName}${input ? ": " + oneLine(firstLine(input) ?? "") : ""}` : null)) : null;
+    const detail = attention && (!facet.message || GENERIC.test(facet.message)) ? (this.promptTitle(id) ?? facet.message ?? null)
+      : attention && !live ? (facet.message ?? null) : live ? (facet.message ?? (a.toolName ? `${a.toolName}${input ? ": " + oneLine(firstLine(input) ?? "") : ""}` : null)) : null;
     const hostId = runtime === LOCAL && w.hostId && w.hostId !== LOCAL ? w.hostId : runtime;
     return {
       id,
@@ -434,12 +442,24 @@ export class OrcaWatcher {
       const p = before.get(a.id);
       const where = a.hostId === LOCAL ? a.workspace : `${a.hostName} · ${a.workspace}`;
       const base = { agentId: a.id, workspace: where, title: a.title, at: next.at };
-      if (a.attention && !p?.attention) this.emit({ type: "activity", data: { ...base, kind: "attention", text: a.detail ?? "needs your input" } });
+      if (a.attention && !p?.attention) {
+        const tell = (text?: string | null) => this.emit({ type: "activity", data: { ...base, kind: "attention", text: text || "needs your input" } });
+        // "permission prompt" says little: read the prompt's own title off the screen first.
+        if (a.detail && !GENERIC.test(a.detail)) tell(a.detail);
+        else this.screen(a.id).then(() => { this.rebuild(); tell(this.promptTitle(a.id) ?? a.detail); }, () => tell(a.detail));
+      }
       else if (a.state === "done" && p && (p.state === "working" || p.state === "waiting"))
         this.emit({ type: "activity", data: { ...base, kind: "done", text: clip(a.lastMessage, 300) ?? "finished" } });
       else if (a.state === "working" && (!p || p.state === "done" || p.state === "idle"))
         this.emit({ type: "activity", data: { ...base, kind: "started", text: a.title } });
     }
+  }
+
+  /** The first line of the prompt last read off this agent's screen ("Held message from another session"). */
+  private promptTitle(id: string): string | null {
+    const seen = this.screens.get(id);
+    if (!seen || Date.now() - seen.at > 120_000 || !seen.view.options.length) return null;
+    return clip(seen.view.lines.find((l) => l.trim())?.trim(), 160) ?? null;
   }
 
   private emit(ev: Parameters<Parameters<OrcaWatcher["subscribe"]>[0]>[0]) {
@@ -487,7 +507,7 @@ export class OrcaWatcher {
       ({ runtime, handle } = await this.terminalFor(id, true)); // terminal restarted: look it up again
       res = await this.rpc.call<any>(runtime, "terminal.read", { terminal: handle, screen: true });
     }
-    const view = { handle, ...parseScreen(res.terminal?.tail ?? []) };
+    const view = { handle, ...parseScreen(res.terminal?.tail ?? [], { unnumbered: !!this.agent(id)?.attention }) };
     this.screens.set(id, { view, at: Date.now() });
     return view;
   }
@@ -524,6 +544,7 @@ export class OrcaWatcher {
     const view = recent && Date.now() - recent.at < 8000 ? recent.view : await this.screen(id);
     const { handle, options } = view;
     if (body.option !== undefined) {
+      if (!view.numbered) return this.pickByArrows(id, body.option);
       if (!options.some((o) => o.n === body.option)) {
         const now = await this.screen(id); // the menu may have changed: check the live screen once
         if (!now.options.some((o) => o.n === body.option)) throw new OrcaError(`Option ${body.option} is no longer on screen`, "stale_menu");
@@ -551,6 +572,30 @@ export class OrcaWatcher {
     await this.prompt(runtime, handle, text); // agent prompt: Orca bracket-pastes and submits
     this.settle(runtime);
     return "sent";
+  }
+
+  /**
+   * A menu without numbers: read where the ❯ is right now (someone may have moved it in the
+   * terminal), step it to the option with ↑/↓ one key at a time, then press Enter.
+   */
+  private async pickByArrows(id: string, n: number): Promise<string> {
+    const { runtime } = this.route(id);
+    const { handle, options } = await this.screen(id);
+    const want = options.find((o) => o.n === n);
+    const from = options.findIndex((o) => o.selected);
+    if (!want || from < 0) throw new OrcaError(`Option ${n} is no longer on screen`, "stale_menu");
+    const steps = n - 1 - from;
+    for (let i = 0; i < Math.abs(steps); i++) {
+      await this.keys(runtime, handle, steps > 0 ? "\x1b[B" : "\x1b[A", false);
+      await Bun.sleep(90);
+    }
+    // Check the ❯ landed on the right option before committing to it.
+    const now = await this.screen(id);
+    if (!now.options.find((o) => o.n === n)?.selected) throw new OrcaError(`Couldn't move to “${want.label}”; pick it in the terminal`, "stale_menu");
+    await this.keys(runtime, handle, null, true);
+    this.screens.delete(id);
+    this.settle(runtime);
+    return `picked “${want.label}”`;
   }
 
   async focus(id: string) {

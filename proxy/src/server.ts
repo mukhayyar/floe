@@ -147,7 +147,9 @@ const server = Bun.serve({
         const id = decodeURIComponent(agent[1]);
         if (m === "GET" && agent[2] === "screen") return json({ ok: true, ...(await orca.screen(id)) });
         if (m === "POST" && agent[2] === "answer") {
-          const result = await orca.answer(id, await body(req));
+          const b = await body(req);
+          const result = await orca.answer(id, b);
+          console.log(`[answer] ${id.split("|")[0]} ${b.option !== undefined ? "option " + b.option : "text"}: ${result}`);
           setTimeout(() => orca.poll(), 400); // reflect the change quickly
           return json({ ok: true, result });
         }

@@ -162,11 +162,11 @@ export class DemoWatcher {
     const a = this.agent(id);
     if (a?.attention) {
       return {
-        handle: "demo", options: OPTIONS.map((label, i) => ({ n: i + 1, label, selected: i === 0, freeText: i === 2 })),
+        handle: "demo", numbered: true, options: OPTIONS.map((label, i) => ({ n: i + 1, label, selected: i === 0, freeText: i === 2 })),
         lines: ["● I found two places that create the Express app.", "", "  The limiter has to see every request, so it goes in", "  src/middleware/index.ts before the routers.", "", `  ${QUESTION}`],
       };
     }
-    return { handle: "demo", options: [], lines: (a?.steps ?? []).map((s) => (s.kind === "tool" ? `⏺ ${s.tool}(${s.text})` : `● ${s.text}`)) };
+    return { handle: "demo", numbered: true, options: [], lines: (a?.steps ?? []).map((s) => (s.kind === "tool" ? `⏺ ${s.tool}(${s.text})` : `● ${s.text}`)) };
   }
 
   async answer(id: string, body: { option?: number; text?: string }): Promise<string> {

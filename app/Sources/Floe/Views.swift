@@ -372,6 +372,19 @@ struct ExpandedView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             if store.tab != .settings { InputBar() }
         }
+        .overlay(alignment: .top) { collapseBand }
+    }
+
+    /// The empty black band along the top (around the camera, at the notch): click it to fold
+    /// Floe back up, like the chevron. Dragging it still moves Floe along the top edge.
+    private var collapseBand: some View {
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(height: geo.topInset + 2)
+            .contentShape(Rectangle())
+            .onTapGesture { store.collapse() }
+            .dragToMove()
+            .help("Click to collapse")
     }
 
     private var header: some View {

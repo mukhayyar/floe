@@ -1,6 +1,8 @@
-// Pull the numbered choice menu out of an agent's rendered screen.
-// Claude Code (AskUserQuestion, permission prompts) and Codex (approvals) both draw
-// "❯ 1. Yes" / "  2. No …" style menus where typing the digit picks the option.
+// Pull the choice menu out of an agent's rendered screen.
+// Claude Code (AskUserQuestion, permission prompts) and Codex (approvals) draw
+// "❯ 1. Yes" / "  2. No …" style menus where typing the digit picks the option. Some Claude
+// Code dialogs hide the numbers ("❯ Deny — …" / "  Deliver this message to Claude", for a
+// message held from another session): those are picked by moving the ❯ with the arrow keys.
 
 export interface MenuOption {
   n: number;
@@ -13,10 +15,14 @@ export interface MenuOption {
 export interface ScreenView {
   lines: string[];
   options: MenuOption[];
+  /** false when the menu has no numbers: `n` is then the option's position, picked with ↑/↓ and Enter. */
+  numbered: boolean;
 }
 
 const OPTION = /^[\s│┃|]*([❯›>▶→●]\s*)?(\d{1,2})[.)]\s+(.+?)[\s│┃|]*$/;
+const POINTER = /^(\s*)[❯›▶→]\s+(\S.*)$/;
 const RULE = /^[\s─━═╭╮╰╯│┃|┌┐└┘-]*$/;
+const DOTTED = /^[\s╌╍┄┅┈┉]+$/;
 const FOOTER = /(Enter to (select|confirm)|↑\/↓|Esc to (cancel|interrupt)|shift\+tab to cycle|\? for shortcuts)/i;
 const FREE_TEXT = /(type something|tell \w+ what to do differently|something else|^other\b|custom answer)/i;
 
@@ -24,12 +30,11 @@ function clean(line: string): string {
   return line.replace(/^[\s]*[│┃|]\s?/, "").replace(/\s*[│┃|]\s*$/, "").replace(/\s+$/, "");
 }
 
-export function parseScreen(tail: string[], lookback = 30): ScreenView {
-  const start = Math.max(0, tail.length - lookback);
-  const window = tail.slice(start);
+type Found = { idx: number; opt: MenuOption }[];
 
-  // Walk upward from the bottom collecting option lines; a menu is a run that counts 1..k.
-  const found: { idx: number; opt: MenuOption }[] = [];
+/** A numbered menu: a run of option lines counting 1..k, read upward from the bottom. */
+function numberedMenu(window: string[]): Found {
+  const found: Found = [];
   for (let i = window.length - 1; i >= 0; i--) {
     const m = OPTION.exec(window[i]);
     if (!m) continue;
@@ -39,13 +44,61 @@ export function parseScreen(tail: string[], lookback = 30): ScreenView {
     found.unshift({ idx: i, opt: { n, label, selected: !!m[1], freeText: FREE_TEXT.test(label) } });
     if (n === 1) break;
   }
-  const isMenu = found.length >= 2 && found[0].opt.n === 1 && found.every((f, k) => f.opt.n === k + 1);
-  const options = isMenu ? found.map((f) => f.opt) : [];
+  const ok = found.length >= 2 && found[0].opt.n === 1 && found.every((f, k) => f.opt.n === k + 1);
+  return ok ? found : [];
+}
+
+/**
+ * A menu without numbers: the last ❯ line plus the lines beside it whose label starts in the
+ * same column (deeper-indented lines are an option's description). Claude's own prompt box
+ * also starts with ❯, so the caller only asks for this while the agent is blocked on a
+ * prompt, and a ❯ line boxed in by rules (the prompt box) never counts.
+ */
+function unnumberedMenu(window: string[]): Found {
+  const rows = window.map(clean);
+  let at = -1;
+  for (let i = rows.length - 1; i >= 0 && at < 0; i--) if (POINTER.test(rows[i])) at = i;
+  if (at < 0) return [];
+  const m = POINTER.exec(rows[at])!;
+  const col = rows[at].length - m[2].length; // where labels start
+  const kind = (row: string): "option" | "more" | null => {
+    if (row.length <= col || row.slice(0, col).trim() !== "") return null;
+    return row[col] !== " " ? "option" : "more";
+  };
+  let first = at;
+  let last = at;
+  while (first > 0 && kind(rows[first - 1])) first--;
+  while (last < rows.length - 1 && kind(rows[last + 1])) last++;
+  const before = rows[first - 1] ?? "";
+  const after = rows[last + 1] ?? "";
+  if (RULE.test(before) && before.trim().length > 3 && RULE.test(after) && after.trim().length > 3) return [];
+
+  const found: Found = [];
+  for (let i = first; i <= last; i++) {
+    if (i !== at && kind(rows[i]) !== "option") continue;
+    const label = (i === at ? m[2] : rows[i].slice(col)).trim();
+    found.push({ idx: i, opt: { n: found.length + 1, label, selected: i === at, freeText: FREE_TEXT.test(label) } });
+  }
+  return found.length >= 2 ? found : [];
+}
+
+export function parseScreen(tail: string[], opts: { unnumbered?: boolean } = {}, lookback = 30): ScreenView {
+  const start = Math.max(0, tail.length - lookback);
+  const window = tail.slice(start);
+
+  let found = numberedMenu(window);
+  let numbered = true;
+  if (!found.length && opts.unnumbered) {
+    found = unnumberedMenu(window);
+    numbered = false;
+  }
+  const isMenu = found.length > 0;
+  const options = found.map((f) => f.opt);
 
   let from = 0;
   let to = window.length;
   if (isMenu) {
-    from = Math.max(0, found[0].idx - 8);
+    from = Math.max(0, found[0].idx - 14);
     // Start just after the separator that opens the menu box, if there is one.
     for (let i = found[0].idx - 1; i >= from; i--) {
       if (RULE.test(window[i]) && window[i].trim().length > 3) {
@@ -59,8 +112,8 @@ export function parseScreen(tail: string[], lookback = 30): ScreenView {
   }
   const lines = window
     .slice(from, to)
-    .filter((l) => !RULE.test(l) && !FOOTER.test(l))
+    .filter((l) => !RULE.test(l) && !DOTTED.test(l) && !FOOTER.test(l))
     .map(clean)
     .filter((l, i, arr) => l.trim() !== "" || (i > 0 && arr[i - 1].trim() !== ""));
-  return { lines, options };
+  return { lines, options, numbered: isMenu ? numbered : true };
 }
