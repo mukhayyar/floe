@@ -1,9 +1,9 @@
 # Floe
 
-**A Dynamic-Island overlay for [Orca](https://orca.stably.ai).** Floe sits in your Mac's notch and shows what
-your Orca agents are doing on every host: live tool-call timelines, questions waiting for an answer,
-and a moonlit sea before a shrine island where every machine is a mechanical sage riding an orca. It stays out of your
-way, even in a full-screen game.
+**A Dynamic-Island overlay for [Orca](https://orca.stably.ai).** Floe sits in your Mac's notch (on Linux and
+Windows, at the top centre of the screen) and shows what your Orca agents are doing on every host: live
+tool-call timelines, questions waiting for an answer, and a moonlit sea before a shrine island where every
+machine is a mechanical sage riding an orca. It stays out of your way, even in a full-screen game.
 
 <p align="center">
   <img src="docs/floe.gif" width="380" alt="Floe: the Live tab with two agents, the Hosts tab with four karakuri sages riding orcas through the sea before a shrine island, and a host's projects">
@@ -14,24 +14,39 @@ way, even in a full-screen game.
 
 ## Install
 
+**macOS and Linux:**
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/mukhayyar/floe/main/install.sh | bash
+```
+
+**Windows** (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/mukhayyar/floe/main/install.ps1 | iex
 ```
 
 That's all. The installer:
 - checks for Orca;
 - installs [Bun](https://bun.sh) if you don't have it;
-- downloads the latest release, a prebuilt universal `Floe.app` for Apple Silicon and Intel, into `~/Applications`;
-- starts Floe at login.
+- downloads the latest release:
+  - macOS: a universal `Floe.app` for Apple Silicon and Intel, into `~/Applications`;
+  - Linux: `Floe.AppImage` (x86_64 or aarch64) into `~/.local/share/floe`, plus an entry in your apps menu;
+  - Windows: `floe.exe` into `%LOCALAPPDATA%\Floe`, plus a Start menu entry;
+- starts Floe, and starts it at login from then on.
 
-You'll need macOS 14 (Sonoma) or newer and Orca. These are optional:
+You'll need Orca, and macOS 14 (Sonoma) or newer, a Linux desktop, or Windows 10/11. These are optional:
 - [Claude Code](https://claude.com/claude-code), for the Ask tab.
-- Google Chrome, Chromium, Brave or Edge, which draws the sages once per host.
+- Google Chrome, Chromium, Brave or Edge, which draws the sages once per host (Windows always has Edge).
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/mukhayyar/floe/main/install.sh | bash -s -- --uninstall    # remove it
 curl -fsSL https://raw.githubusercontent.com/mukhayyar/floe/main/install.sh | bash -s -- --from-source  # build the app here
 ```
+
+On Windows, remove it with `$env:FLOE_UNINSTALL=1; irm https://raw.githubusercontent.com/mukhayyar/floe/main/install.ps1 | iex`.
+
+The Linux and Windows builds are new, so a few things differ from the Mac (see [Linux and Windows](#linux-and-windows)).
 
 ## What it does
 
@@ -97,11 +112,40 @@ you get the normal Mac cursor instead of the game's (unless the pill is click-th
 game keeps its cursor because the click goes to the game). Drag it along the top edge to clear
 your HUD.
 
+### Linux and Windows
+
+On Linux and Windows, Floe is a separate app ([`desktop/`](desktop/), built with Tauri), with the same island
+and the same tabs: Live, Hosts, Ask and Settings. Some things work differently from the Mac:
+
+- **It sits at the top centre of the screen** (on GNOME, just under the top bar). Drag it sideways
+  to move it. `Alt+Space` opens it (set `hotkey` in `config.json`), and `Esc` closes it.
+- **Its tray icon** has Open, Settings and Quit, where the desktop shows tray icons. GNOME needs the
+  AppIndicator extension for this; without the extension there's no tray icon, but Floe works the same.
+- **It starts the proxy itself.** There's no separate service: quitting Floe stops the proxy it started.
+  On first run, Floe adds itself to your login items. Turn that off with "Launch at login" in Settings.
+- **Linux:**
+  - On a Wayland desktop it runs through XWayland, because Wayland doesn't let apps place their
+    own window or keep it on top. `Alt+Space` works while an X11 or XWayland window has focus.
+  - Transparent corners need a compositing desktop, which every current one is.
+  - The AppImage needs FUSE 2. Without it, the installer unpacks it instead.
+  - Floe uses Orca's own CLI (`orca-ide`) and never runs a bare `orca`, which on Ubuntu is the
+    GNOME screen reader.
+- **Games:** Floe stays above windowed and borderless full-screen games. Exclusive full-screen
+  mode on Windows covers every overlay, so pick borderless.
+- **Files:**
+  - App and proxy: `~/.local/share/floe` on Linux, `%LOCALAPPDATA%\Floe` on Windows.
+  - Logs: `~/.local/state/floe` on Linux, `%LOCALAPPDATA%\Floe\logs` on Windows.
+  - Settings: `~/.config/floe` on every system.
+- **What's been tested:**
+  - Linux: the proxy and the app on an Ubuntu 24.04 desktop (X11), against a real Orca.
+  - Windows: the proxy, and the app's build and startup, in CI. Neither has been run against
+    a real Orca on Windows yet.
+
 ## Use it
 
 | | |
 |---|---|
-| `⌥ Space` | open Floe and focus the input (again, or `Esc`, to close it and hand focus back) |
+| `⌥ Space` (`Alt+Space` on Linux and Windows) | open Floe and focus the input (again, or `Esc`, to close it and hand focus back) |
 | click the pill | open Floe |
 | drag the pill | move it along the top edge (it snaps to the notch) |
 | right-click the pill | snap to notch, click-through, border, sounds, quit |
@@ -151,7 +195,7 @@ answering, so it works while Floe is collapsed. It keeps the setting in
 
 ```
 Floe.app (Swift, AppKit + SwiftUI)  ──HTTP/SSE──▶  proxy (Bun, 127.0.0.1:7717)
-                                                    ├─ this Mac: Orca's local runtime socket
+Floe for Linux/Windows (desktop/, Tauri) ─┘         ├─ this machine: Orca's runtime socket (a named pipe on Windows)
                                                     ├─ Orca servers: one long-lived client on Orca's own RuntimeClient
                                                     ├─ writes: the official `orca` CLI
                                                     ├─ Ask: `claude -p`, resumable
@@ -168,7 +212,12 @@ Floe.app (Swift, AppKit + SwiftUI)  ──HTTP/SSE──▶  proxy (Bun, 127.0.0
   - `scene.mjs` is the shrine island and the open sea, with where the riders swim, moor and wait.
   - `build.mjs` renders them (`--sheet`, `--scene`, `--preview`) and runs the geometry audit
     (`--audit`, every state).
-- `app/Sources/Floe/` is the overlay:
+- `proxy/src/platform.ts` knows where Orca and Floe live on macOS, Linux and Windows. The proxy
+  answers only Floe: it refuses requests that come from a web page or carry another host name,
+  so a site open in your browser can't drive your terminals through localhost.
+- `desktop/` is the Linux and Windows overlay: a Preact UI (`src/`) and a small Rust shell
+  (`src-tauri/`) for the window, hotkey, tray, login item and the proxy supervisor.
+- `app/Sources/Floe/` is the Mac overlay:
   - `IslandWindow`: the panel, dragging, focus and the cursor.
   - `Gathering`, `Pod` and `Sage`: the scene, the swimming riders (loops, facings, depth, swell) and
     the sprite sheets.
@@ -176,8 +225,8 @@ Floe.app (Swift, AppKit + SwiftUI)  ──HTTP/SSE──▶  proxy (Bun, 127.0.0
   - `Timeline`: the tool steps.
   - `AgentViews` and `ChatViews`.
 
-Everything stays on your Mac. The proxy listens on 127.0.0.1 only and talks to Orca and the CLIs
-you already have.
+Everything stays on your computer. The proxy listens on 127.0.0.1 only and talks to Orca and the
+CLIs you already have.
 
 ### Try it without Orca
 
@@ -195,6 +244,18 @@ scripts/uninstall.sh    # stop both and remove the login items
 ```
 
 Logs are in `~/Library/Logs/Floe/`. Building needs the Xcode Command Line Tools and Bun.
+
+The Linux and Windows app builds with Rust and Bun (see [`desktop/README.md`](desktop/README.md) for
+the Linux libraries):
+
+```sh
+cd desktop && bun install
+bunx tauri dev                              # run it against the proxy on :7717
+bunx tauri build --bundles appimage,deb     # Linux
+bunx tauri build --bundles nsis             # Windows
+```
+
+CI builds both for every release tag (`.github/workflows/desktop.yml`).
 
 ## Credits
 
