@@ -1,5 +1,7 @@
 name: debug-spawn
-on: workflow_dispatch
+on:
+  pull_request:
+    paths: [".github/workflows/debug-spawn.yml"]
 jobs:
   win:
     runs-on: windows-latest
