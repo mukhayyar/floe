@@ -204,8 +204,9 @@ if [[ "$OS" == "Linux" ]]; then
     chmod +x "$PREFIX/Floe.AppImage"
     EXEC="$PREFIX/Floe.AppImage"
     # AppImages mount themselves with FUSE 2; without it, unpack once and run the unpacked copy
-    if ! { ldconfig -p 2>/dev/null | grep -q 'libfuse\.so\.2'; }; then
-      say "FUSE 2 isn't installed, so unpacking the AppImage"
+    # (FLOE_EXTRACT=1 unpacks it anyway, for systems where mounting AppImages fails)
+    if [[ "${FLOE_EXTRACT:-0}" == "1" ]] || ! { ldconfig -p 2>/dev/null | grep -q 'libfuse\.so\.2'; }; then
+      say "Unpacking the AppImage, so it runs without FUSE 2"
       (cd "$PREFIX" && ./Floe.AppImage --appimage-extract >/dev/null) || die "Couldn't unpack Floe.AppImage."
       mv "$PREFIX/squashfs-root" "$PREFIX/app"
       rm -f "$PREFIX/Floe.AppImage"
@@ -213,8 +214,9 @@ if [[ "$OS" == "Linux" ]]; then
     fi
     (cd "$TMP" && "$PREFIX/Floe.AppImage" --appimage-extract '*.png' >/dev/null 2>&1) || true
   fi
-  ICON="$(find "$TMP/squashfs-root" "$PREFIX/app" -maxdepth 1 -name '*.png' 2>/dev/null | head -1 || true)"
-  [[ -n "$ICON" ]] && cp "$ICON" "$PREFIX/floe.png"
+  # the top-level floe.png is a symlink into usr/share/icons; Floe.png next to it is the file
+  ICON="$(find "$TMP/squashfs-root" "$PREFIX/app" -maxdepth 1 -name '*.png' -type f 2>/dev/null | head -1 || true)"
+  [[ -n "$ICON" ]] && { cp "$ICON" "$PREFIX/floe.png" || true; }
   cat > "$APPDIR/floe.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
