@@ -19,6 +19,16 @@ impl Focus {
         self.remember(window);
         let _ = window.set_focusable(true);
         let _ = window.set_focus();
+        // GNOME refuses focus asked for without a fresh key or click of ours (`floe --toggle` from
+        // a desktop shortcut is another process); an activation request sent the way a pager
+        // sends one goes through. A moment later, once the window accepts focus again.
+        #[cfg(target_os = "linux")]
+        std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            if let Some(w) = x11::own_window() {
+                x11::activate(w);
+            }
+        });
     }
 
     #[cfg(windows)]
@@ -159,6 +169,27 @@ mod x11 {
             }
             out
         })
+    }
+
+    /// Floe's own window, from the window manager's list of windows (`_NET_CLIENT_LIST`).
+    pub fn own_window() -> Option<u64> {
+        let windows = with_display(|xl, dpy| unsafe {
+            let root = (xl.XDefaultRootWindow)(dpy);
+            let prop = atom(xl, dpy, "_NET_CLIENT_LIST");
+            let (mut ty, mut fmt, mut n, mut after) = (0 as xlib::Atom, 0 as c_int, 0 as c_ulong, 0 as c_ulong);
+            let mut data: *mut c_uchar = ptr::null_mut();
+            let ok = (xl.XGetWindowProperty)(dpy, root, prop, 0, 4096, xlib::False, xlib::XA_WINDOW, &mut ty, &mut fmt, &mut n, &mut after, &mut data);
+            let mut out = Vec::new();
+            if ok == xlib::Success as c_int && !data.is_null() && fmt == 32 {
+                out = std::slice::from_raw_parts(data as *const c_ulong, n as usize).iter().map(|&w| w as u64).collect();
+            }
+            if !data.is_null() {
+                (xl.XFree)(data as *mut _);
+            }
+            Some(out)
+        })?;
+        let me = std::process::id();
+        windows.into_iter().find(|&w| pid_of(w) == Some(me))
     }
 
     /// The process that owns a window (`_NET_WM_PID`), when it says.
