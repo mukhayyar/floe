@@ -31,6 +31,8 @@ export interface Config {
   extraDirs: string[];
   /** Tools the brain may use without asking. Anything else is denied (no one is there to approve). */
   allowedTools: string[];
+  /** Ask GitHub twice a day whether a newer Floe is out (shown in Settings). */
+  checkUpdates: boolean;
 }
 
 const DEFAULTS: Config = {
@@ -57,6 +59,7 @@ const DEFAULTS: Config = {
     "WebSearch",
     "WebFetch",
   ],
+  checkUpdates: true,
 };
 
 function readJson<T>(path: string): Partial<T> {

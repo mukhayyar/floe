@@ -22,6 +22,7 @@ import type {
   Tab,
   Target,
   TerminalInfo,
+  UpdateInfo,
   WorkspaceView,
 } from "./types";
 
@@ -613,6 +614,13 @@ export async function setAutostart(onOff: boolean) {
   }
 }
 
+/** Is a newer Floe out? `check` asks GitHub now (the proxy does it at most every 10 minutes). */
+export const update = signal<UpdateInfo | null>(null);
+export async function loadUpdate(check = false) {
+  const j = await getJson<UpdateInfo & { ok?: boolean }>(check ? "version?check=1" : "version");
+  if (j && typeof j.current === "string") update.value = j;
+}
+
 async function loadPrefs() {
   const j = await getJson<{ autoDeliver?: boolean }>("prefs");
   if (j) autoDeliver.value = j.autoDeliver === true;
@@ -693,6 +701,7 @@ async function runEvents() {
           proxyOnline.value = true;
           native.log("connected to the proxy");
           loadPrefs();
+          loadUpdate();
           if (!chat.value.length) loadChat();
         }
         backoff = 1;

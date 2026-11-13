@@ -37,6 +37,8 @@ final class IslandStore: ObservableObject {
     @Published var border: Bool { didSet { UserDefaults.standard.set(border, forKey: "border") } }
     /// Kept by the proxy (it answers even while Floe is closed): deliver held messages, pick recommended options.
     @Published var autoDeliver = false
+    /// A newer Floe on GitHub, from the proxy: (latest, release page). Nil when this one is current.
+    @Published var update: (latest: String, current: String, url: URL?)? = nil
 
     /// Set by the window controller: give the panel keyboard focus.
     var requestKey: (() -> Void)?
@@ -251,7 +253,7 @@ final class IslandStore: ObservableObject {
                 req.timeoutInterval = 60
                 do {
                     for try await ev in sseStream(req) {
-                        if !proxyOnline { proxyOnline = true; Task { await loadPrefs() } }
+                        if !proxyOnline { proxyOnline = true; Task { await loadPrefs(); await loadUpdate() } }
                         backoff = 1
                         handle(ev)
                     }
@@ -603,6 +605,18 @@ final class IslandStore: ObservableObject {
         Task {
             let r = await post("prefs", ["autoDeliver": on])
             if !r.ok { autoDeliver = !on; say(r.message.isEmpty ? "Couldn't change auto-deliver" : r.message) }
+        }
+    }
+
+    /// Is a newer Floe out? `check` asks GitHub now (the proxy does it at most every 10 minutes).
+    func loadUpdate(check: Bool = false) async {
+        guard let url = URL(string: "\(base)/version\(check ? "?check=1" : "")"),
+              let (data, _) = try? await URLSession.shared.data(from: url),
+              let j = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+        if j["newer"] as? Bool == true, let latest = j["latest"] as? String {
+            update = (latest, j["current"] as? String ?? "", (j["url"] as? String).flatMap(URL.init(string:)))
+        } else {
+            update = nil
         }
     }
 

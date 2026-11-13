@@ -3,6 +3,7 @@
 //   GET  /health                     liveness
 //   GET  /status                     snapshot: hosts → projects → workspaces, agents with step timelines
 //   GET  /events                     SSE: `snapshot` on every change, `activity` on transitions
+//   GET  /version                    {current, latest, newer, url}: is a newer Floe out (?check=1 asks now)
 //   GET  /prefs                      {autoDeliver}: settings Floe changes from its Settings tab
 //   POST /prefs                      {autoDeliver}  deliver held messages / pick recommended options for you
 //   GET  /agents/:id/screen          what the agent's terminal shows + parsed menu options
@@ -29,6 +30,7 @@ import { OrcaWatcher } from "./orca";
 import { DemoWatcher } from "./demo";
 import { Sages } from "./sages";
 import { prefs, setPrefs } from "./prefs";
+import { checkNow, update, watchUpdates } from "./update";
 
 // Every log line says when (local time), so proxy.log can tell an old error from a new one.
 for (const k of ["log", "warn", "error"] as const) {
@@ -47,6 +49,7 @@ orca.start();
 const sages = new Sages(() => orca.snapshot.hosts);
 setTimeout(() => sages.warm(), 8000);
 setInterval(() => sages.warm(), 60_000);
+watchUpdates(cfg);
 
 const enc = new TextEncoder();
 const sse = (event: string, data: unknown) => enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -165,6 +168,10 @@ async function route(req: Request): Promise<Response> {
     if (m === "GET" && p === "/status") return json(orca.snapshot);
     if (m === "GET" && p === "/events") return events(req);
     if (m === "GET" && p === "/prefs") return json({ ok: true, ...prefs });
+  if (m === "GET" && p === "/version") {
+    const ask = url.searchParams.has("check") && cfg.checkUpdates !== false && Date.now() - (update.checkedAt ?? 0) > 600_000;
+    return json({ ok: true, ...(ask ? await checkNow() : update) });
+  }
     if (m === "POST" && p === "/prefs") {
       const next = setPrefs(await body(req));
       console.log(`[prefs] autoDeliver ${next.autoDeliver ? "on" : "off"}`);

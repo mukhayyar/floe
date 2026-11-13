@@ -606,10 +606,27 @@ struct InputBar: View {
 
 struct SettingsView: View {
     @EnvironmentObject var store: IslandStore
+    static let install = "curl -fsSL https://raw.githubusercontent.com/mukhayyar/floe/main/install.sh | bash"
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                if let u = store.update {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Floe \(u.latest) is out (you have \(u.current))").font(.system(size: 12, weight: .semibold))
+                        Text("To update, run the install command again in Terminal:")
+                            .font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.75))
+                        Text(Self.install).font(.system(size: 10.5, design: .monospaced)).textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack {
+                            SmallButton(title: "Copy command", symbol: "doc.on.doc") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(Self.install, forType: .string)
+                            }
+                            if let url = u.url { SmallButton(title: "What's new", symbol: "arrow.up.right") { NSWorkspace.shared.open(url) } }
+                        }
+                    }
+                }
                 Toggle("Click-through in full-screen games (open it with \(store.config.hotkey))", isOn: $store.clickThrough)
                 Toggle("Play a sound when an agent asks something", isOn: $store.sound)
                 Toggle("Show a banner when an agent finishes", isOn: $store.peekOnDone)
@@ -643,5 +660,6 @@ struct SettingsView: View {
             .font(.system(size: 12))
             .padding(16)
         }
+        .onAppear { Task { await store.loadUpdate(check: true) } }
     }
 }

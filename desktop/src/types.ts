@@ -194,3 +194,11 @@ export interface HotkeyHelp {
   bound: boolean;
   conflict: string | null;
 }
+
+/** The proxy's answer to "is a newer Floe out?" */
+export interface UpdateInfo {
+  current: string;
+  latest: string | null;
+  newer: boolean;
+  url: string | null;
+}

@@ -74,12 +74,32 @@ stop_agents() {
   pkill -f "Floe.app/Contents/MacOS/Floe" 2>/dev/null || true
 }
 
+# The GNOME shortcut Settings can add on Wayland (Floe → floe --toggle). If adding it took Alt+Space
+# from the window menu and left the menu with no key, the menu gets its default back.
+remove_gnome_shortcut() {
+  [[ "${FLOE_NO_LAUNCHD:-0}" == "1" ]] && return 0
+  command -v gsettings >/dev/null 2>&1 || return 0
+  local list_schema=org.gnome.settings-daemon.plugins.media-keys
+  local path=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/floe/
+  local list
+  list=$(gsettings get "$list_schema" custom-keybindings 2>/dev/null) || return 0
+  [[ "$list" == *"$path"* ]] || return 0
+  list=$(printf '%s' "$list" | sed -e "s#, '$path'##" -e "s#'$path', ##" -e "s#'$path'##" -e 's#^@as ##')
+  gsettings set "$list_schema" custom-keybindings "$list" 2>/dev/null || true
+  gsettings reset-recursively "$list_schema.custom-keybinding:$path" 2>/dev/null || true
+  if [[ "$(gsettings get org.gnome.desktop.wm.keybindings activate-window-menu 2>/dev/null)" == "@as []" ]]; then
+    gsettings reset org.gnome.desktop.wm.keybindings activate-window-menu 2>/dev/null || true
+  fi
+  say "Removed Floe's keyboard shortcut from GNOME"
+}
+
 if [[ "$MODE" == "uninstall" ]]; then
   say "Stopping Floe"
   stop_agents
   if [[ "$OS" == "Linux" ]]; then
     rm -f "$AGENTS/Floe.desktop" "$APPDIR/floe.desktop"
     rm -rf "$PREFIX" "$CACHE"
+    remove_gnome_shortcut
   else
     rm -f "$AGENTS/$LABEL_APP.plist" "$AGENTS/$LABEL_PROXY.plist"
     rm -rf "$APPDIR/Floe.app" "$PREFIX" "$CACHE"

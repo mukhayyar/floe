@@ -1,7 +1,7 @@
 // Settings: what this app keeps (sound, banners, border, launch at login), what the proxy keeps
 // (auto-deliver), and where things are when something's wrong.
 
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { native } from "../native";
 import type { HotkeyHelp } from "../types";
 import {
@@ -14,8 +14,10 @@ import {
   proxyOnline,
   proxyState,
   setAutoDeliver,
+  loadUpdate,
   setAutostart,
   sound,
+  update,
 } from "../store";
 import { SmallButton, Toggle } from "./parts";
 
@@ -29,12 +31,34 @@ const PROXY_LABEL: Record<string, string> = {
   offline: "Not answering",
 };
 
+const INSTALL: Record<string, string> = {
+  linux: "curl -fsSL https://raw.githubusercontent.com/mukhayyar/floe/main/install.sh | bash",
+  macos: "curl -fsSL https://raw.githubusercontent.com/mukhayyar/floe/main/install.sh | bash",
+  windows: "irm https://raw.githubusercontent.com/mukhayyar/floe/main/install.ps1 | iex",
+};
+
 export function SettingsView() {
   const b = boot.value;
   const p = proxyState.value;
   const ok = proxyOnline.value;
+  const u = update.value;
+  useEffect(() => void loadUpdate(true), []);
   return (
     <div class="scroll settings">
+      {u?.newer && (
+        <div class="setting update">
+          <div class="label">
+            Floe {u.latest} is out <span class="faint">(you have {u.current})</span>
+          </div>
+          <div class="soft">To update, run the install command again{b?.platform === "windows" ? " in PowerShell" : " in a terminal"}:</div>
+          <code class="cmd">{INSTALL[b?.platform ?? "linux"]}</code>
+          {u.url && (
+            <div class="row gap6 wrap">
+              <SmallButton title="What's new" icon="open" onClick={() => native.openUrl(u.url!)} />
+            </div>
+          )}
+        </div>
+      )}
       <Toggle on={sound.value} onChange={(v) => (sound.value = v)}>
         Play a sound when an agent asks something
       </Toggle>

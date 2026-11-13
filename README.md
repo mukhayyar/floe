@@ -125,7 +125,11 @@ and the same tabs: Live, Hosts, Ask and Settings. Some things work differently f
   On first run, Floe adds itself to your login items. Turn that off with "Launch at login" in Settings.
 - **Linux:**
   - On a Wayland desktop it runs through XWayland, because Wayland doesn't let apps place their
-    own window or keep it on top. `Alt+Space` works while an X11 or XWayland window has focus.
+    own window or keep it on top. Wayland also doesn't let apps listen for keys, so on its own
+    `Alt+Space` works only while an X11 or XWayland window has focus. Make it work everywhere with a
+    desktop keyboard shortcut that runs `floe --toggle`. On GNOME, Settings adds that shortcut for
+    you. Because GNOME uses `Alt+Space` for its window menu, the button offers to take the key from it.
+  - On GNOME with X11, `Alt+Space` reaches Floe before GNOME's window menu.
   - Transparent corners need a compositing desktop, which every current one is.
   - The AppImage needs FUSE 2. Without it, the installer unpacks it instead.
   - Floe uses Orca's own CLI (`orca-ide`) and never runs a bare `orca`, which on Ubuntu is the
@@ -138,8 +142,13 @@ and the same tabs: Live, Hosts, Ask and Settings. Some things work differently f
   - Settings: `~/.config/floe` on every system.
 - **What's been tested:**
   - Linux: the proxy and the app on an Ubuntu 24.04 desktop (X11), against a real Orca.
-  - Windows: the proxy, and the app's build and startup, in CI. Neither has been run against
-    a real Orca on Windows yet.
+  - Windows, in CI:
+    - the app's build and startup;
+    - the installer on a fresh machine;
+    - the proxy talking to a stand-in Orca over a Windows named pipe: it reads the agents and
+      answers a question.
+
+    Neither has been run against a real Orca on Windows yet.
 
 ## Use it
 
@@ -190,6 +199,11 @@ answering, so it works while Floe is collapsed. It keeps the setting in
 - `model`: the model for the Ask tab.
 - `hiddenHosts`: Orca servers to skip, by id or name.
 - `orcaBin`, `claudeBin`: only needed if Floe can't find the `orca` or `claude` CLI on its own.
+- `checkUpdates` (default `true`): twice a day the proxy asks GitHub whether a newer Floe is out.
+  If one is, Settings says so and shows the install command that updates it. Set it to `false`
+  to turn the check off.
+
+On Linux and Windows, `floe --toggle` opens or closes the running Floe, the same as the hotkey.
 
 ## How it works
 
