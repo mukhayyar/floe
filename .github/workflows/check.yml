@@ -75,7 +75,8 @@ jobs:
         run: bash install.sh
       - name: Start Floe under a virtual display; it starts the proxy
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb >/dev/null
+          # a desktop always has Mesa's GL libraries; the server image doesn't (AppImages leave them out on purpose)
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb libegl1 libgl1 libgles2 >/dev/null
           P="$HOME/.local/share/floe"
           ls "$P"; cat "$HOME/.local/share/applications/floe.desktop"
           EXEC=$(grep '^Exec=' "$HOME/.local/share/applications/floe.desktop" | cut -d= -f2- | tr -d '"')
