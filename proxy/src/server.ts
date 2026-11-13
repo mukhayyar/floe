@@ -175,7 +175,7 @@ async function route(req: Request): Promise<Response> {
     }
     if (m === "POST" && p === "/update") {
       if (!update.newer) await checkNow();
-      const r = installNow("you");
+      const r = await installNow("you");
       return r.ok ? json({ ok: true, result: r.message }) : json({ ok: false, error: r.message }, 409);
     }
     if (m === "POST" && p === "/prefs") {

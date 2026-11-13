@@ -1,9 +1,9 @@
 // Keeping Floe up to date. The proxy asks GitHub for the latest release an hour after start and
 // then twice a day (one small request; `"checkUpdates": false` in config.json turns it off).
 //
-// Updating is the installer, the same one-liner you install with, started by the proxy as its
-// own detached process: the installer stops Floe and its proxy, puts the new version in place
-// and starts Floe again, so it must not die with them. With auto-update on (Settings, on by
+// Updating is the installer, the same one-liner you install with, started so that it outlives
+// the proxy: the installer stops Floe and its proxy, puts the new version in place and starts
+// Floe again. With auto-update on (Settings, on by
 // default), a new release is installed once no agent is waiting on you.
 //
 // A Floe run from a git checkout (`scripts/build.sh`, launchd pointing at the repo) never updates
@@ -81,46 +81,67 @@ function lastAttempt(): { version: string; at: number } | null {
   }
 }
 
-/** The installer command for this system, for the given release. */
-export function installerCommand(): string[] {
-  return IS_WIN
-    ? ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", `irm ${RAW}/install.ps1 | iex`]
-    : ["bash", "-c", `curl -fsSL ${RAW}/install.sh | bash`];
-}
+const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
 /**
- * Install the latest release now: start the installer detached (its own session on macOS and
- * Linux; on Windows Floe's job object lets the proxy's children go), logging to update.log.
+ * Start the installer so it outlives this proxy and Floe, which it stops. macOS and Linux: a
+ * detached child in its own session (launchd and pkill leave it alone). Windows: Bun's detached
+ * spawn never runs the command, and a plain child dies with Bun, so Windows itself starts it
+ * (WMI's Win32_Process.Create), outside our process tree, hidden; it writes its own log.
  */
-export function installNow(why: "you" | "auto"): { ok: boolean; message: string } {
+async function launchInstaller(target: string): Promise<void> {
+  if (!IS_WIN) {
+    const log = openSync(LOG, "a");
+    const child = spawn("bash", ["-c", `curl -fsSL ${RAW}/install.sh | bash`], {
+      detached: true,
+      stdio: ["ignore", log, log],
+      // the same install it updates, at the release it announced
+      env: { ...childEnv(), FLOE_PREFIX: ROOT, FLOE_VERSION: `v${target}` },
+    });
+    await new Promise<void>((resolve, reject) => {
+      child.once("spawn", resolve);
+      child.once("error", reject);
+    });
+    child.unref();
+    return;
+  }
+  const script = [
+    `$env:FLOE_PREFIX = ${psQuote(ROOT)}`,
+    `$env:FLOE_VERSION = ${psQuote(`v${target}`)}`,
+    `& { irm ${RAW}/install.ps1 | iex } *>> ${psQuote(LOG)}`,
+  ].join("; ");
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  const command = `powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand ${encoded}`;
+  const launcher = [
+    "$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }",
+    `$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ${psQuote(command)}; ProcessStartupInformation = $si }`,
+    "exit $r.ReturnValue",
+  ].join("; ");
+  const proc = Bun.spawn(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", launcher], {
+    stdin: "ignore", stdout: "pipe", stderr: "pipe", windowsHide: true, env: childEnv(),
+  });
+  const [code, err] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+  if (code !== 0) throw new Error(`Windows didn't start the installer (${code}): ${err.trim().slice(0, 200)}`);
+}
+
+/** Install the latest release now, logging to update.log; Floe restarts on the new version. */
+export async function installNow(why: "you" | "auto"): Promise<{ ok: boolean; message: string }> {
   if (!update.canUpdate) return { ok: false, message: `This Floe runs from a source checkout (${ROOT}): update it with git pull.` };
   if (update.updating) return { ok: true, message: "Already updating" };
   if (!update.newer || !update.latest) return { ok: false, message: "Floe is up to date" };
   const target = update.latest;
+  update.updating = true;
   try {
     mkdirSync(dirs.logs, { recursive: true });
     mkdirSync(dirs.cache, { recursive: true });
     writeFileSync(ATTEMPT, JSON.stringify({ version: target, at: Date.now() }));
-    const log = openSync(LOG, "a");
     writeFileSync(LOG, `\n=== ${new Date().toLocaleString("sv-SE")} updating ${VERSION} → ${target} (${why})\n`, { flag: "a" });
-    const [cmd, ...args] = installerCommand();
-    const child = spawn(cmd, args, {
-      detached: true,
-      stdio: ["ignore", log, log],
-      windowsHide: true,
-      // the same install it updates, at the release it announced
-      env: { ...childEnv(), FLOE_PREFIX: ROOT, FLOE_VERSION: `v${target}` },
-    });
-    child.on("error", (e) => {
-      update.updating = false;
-      console.error(`[update] couldn't start the installer: ${e.message}`);
-    });
-    child.unref();
-    update.updating = true;
+    await launchInstaller(target);
     console.log(`[update] installing Floe ${target} (${why}); log: ${LOG}`);
     return { ok: true, message: `Updating to Floe ${target}. Floe restarts in a moment.` };
   } catch (e) {
     update.updating = false;
+    console.error(`[update] couldn't start the installer: ${(e as Error).message}`);
     return { ok: false, message: `Couldn't start the update: ${(e as Error).message}` };
   }
 }
@@ -135,7 +156,7 @@ export function watchUpdates(cfg: Config, quiet: () => boolean) {
     if (!prefs.autoUpdate || !update.newer || !update.canUpdate || update.updating || !update.latest) return;
     const last = lastAttempt();
     if (last?.version === update.latest && Date.now() - last.at < 6 * 3600_000) return;
-    if (quiet()) installNow("auto");
+    if (quiet()) void installNow("auto");
   };
   setTimeout(async () => {
     await checkNow();
