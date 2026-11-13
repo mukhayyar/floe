@@ -1,0 +1,36 @@
+name: debug-spawn
+on: workflow_dispatch
+jobs:
+  win:
+    runs-on: windows-latest
+    steps:
+      - uses: oven-sh/setup-bun@v2
+      - shell: pwsh
+        run: |
+          $d = "$env:RUNNER_TEMP\sp"; New-Item -ItemType Directory -Force $d | Out-Null
+          @'
+          import { spawn } from "node:child_process";
+          import { openSync } from "node:fs";
+          const d = process.argv[2];
+          const ps = (tag) => `Set-Content -Path '${d}\\${tag}.marker' -Value ran; Write-Output "${tag} stdout"; Write-Host "${tag} host"; Start-Sleep 1`;
+          // A: detached, stdio to a file
+          const a = openSync(`${d}\\A.log`, "a");
+          const ca = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", ps("A")], { detached: true, stdio: ["ignore", a, a], windowsHide: true });
+          ca.on("error", (e) => console.log("A error", e.message)); ca.on("exit", (c) => console.log("A exit", c)); ca.unref();
+          // B: detached, stdio ignored, PowerShell writes its own log
+          const cb = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", `& { ${ps("B")} } *>> '${d}\\B.log'`], { detached: true, stdio: "ignore", windowsHide: true });
+          cb.on("error", (e) => console.log("B error", e.message)); cb.on("exit", (c) => console.log("B exit", c)); cb.unref();
+          // C: not detached, stdio to a file, no -WindowStyle
+          const c3 = openSync(`${d}\\C.log`, "a");
+          const cc = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps("C")], { stdio: ["ignore", c3, c3], windowsHide: true });
+          cc.on("error", (e) => console.log("C error", e.message)); cc.on("exit", (c) => console.log("C exit", c));
+          // D: detached, stdio to a file, no -WindowStyle
+          const d4 = openSync(`${d}\\D.log`, "a");
+          const cd = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps("D")], { detached: true, stdio: ["ignore", d4, d4], windowsHide: true });
+          cd.on("error", (e) => console.log("D error", e.message)); cd.on("exit", (c) => console.log("D exit", c)); cd.unref();
+          setTimeout(() => process.exit(0), 8000);
+          '@ | Set-Content "$d\t.ts"
+          bun "$d\t.ts" $d
+          Start-Sleep 5
+          Get-ChildItem $d | Format-Table Name, Length
+          foreach ($f in "A","B","C","D") { Write-Host "== $f"; Get-Content "$d\$f.log" -ErrorAction SilentlyContinue; if (Test-Path "$d\$f.marker") { Write-Host "$f marker present" } }
