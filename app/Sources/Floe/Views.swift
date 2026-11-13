@@ -606,10 +606,31 @@ struct InputBar: View {
 
 struct SettingsView: View {
     @EnvironmentObject var store: IslandStore
+    static let install = "curl -fsSL https://raw.githubusercontent.com/mukhayyar/floe/main/install.sh | bash"
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                if let u = store.update {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Floe \(u.latest) is out (you have \(u.current))").font(.system(size: 12, weight: .semibold))
+                        if u.updating {
+                            Text("Updating… Floe closes and opens again in a moment.")
+                                .font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.75))
+                        } else if u.canUpdate {
+                            HStack {
+                                SmallButton(title: "Update now", symbol: "arrow.down.circle") { store.updateNow() }
+                                if let url = u.url { SmallButton(title: "What's new", symbol: "arrow.up.right") { NSWorkspace.shared.open(url) } }
+                            }
+                        } else {
+                            Text("This Floe runs from a source checkout. Update it with git pull, or install it with:")
+                                .font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.75))
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(Self.install).font(.system(size: 10.5, design: .monospaced)).textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
                 Toggle("Click-through in full-screen games (open it with \(store.config.hotkey))", isOn: $store.clickThrough)
                 Toggle("Play a sound when an agent asks something", isOn: $store.sound)
                 Toggle("Show a banner when an agent finishes", isOn: $store.peekOnDone)
@@ -618,6 +639,15 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Auto-deliver")
                         Text("Delivers messages held from other sessions and picks the option an agent marks “Recommended”, without asking. Permission prompts still wait for you.")
+                            .font(.system(size: 10.5)).foregroundStyle(Color.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .disabled(!store.proxyOnline)
+                Toggle(isOn: Binding(get: { store.autoUpdate }, set: { store.setAutoUpdate($0) })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Update Floe automatically")
+                        Text("Installs a new release by itself once no agent is waiting on you. Floe closes and opens again while it updates.")
                             .font(.system(size: 10.5)).foregroundStyle(Color.dim)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -643,5 +673,6 @@ struct SettingsView: View {
             .font(.system(size: 12))
             .padding(16)
         }
+        .onAppear { Task { await store.loadUpdate(check: true) } }
     }
 }

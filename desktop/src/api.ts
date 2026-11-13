@@ -30,7 +30,7 @@ export async function post(path: string, body: Record<string, unknown> = {}, onl
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(45000),
+      signal: AbortSignal.timeout(75000), // launching an agent on a remote host can take a minute
     });
     const j = await r.json().catch(() => null);
     const ok = j?.ok === true;
@@ -45,10 +45,32 @@ export interface SSEEvent {
   data: string;
 }
 
-/** Server-sent events over fetch (works for GET /events and POST /ask alike). */
-export async function* sse(path: string, init: RequestInit = {}): AsyncGenerator<SSEEvent> {
-  const r = await fetch(`${base}/${path}`, init);
-  if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
+/**
+ * Server-sent events over fetch (works for GET /events and POST /ask alike). With `idleMs`, a
+ * stream that goes quiet that long (the proxy pings every 15 s) is dropped, so a wedged proxy
+ * shows as offline instead of a frozen snapshot.
+ */
+export async function* sse(path: string, init: RequestInit = {}, idleMs = 0): AsyncGenerator<SSEEvent> {
+  const ctrl = new AbortController();
+  init.signal?.addEventListener("abort", () => ctrl.abort(), { once: true });
+  let timer: number | undefined;
+  const arm = () => {
+    if (!idleMs) return;
+    clearTimeout(timer);
+    timer = window.setTimeout(() => ctrl.abort(new Error("the proxy went quiet")), idleMs);
+  };
+  arm();
+  let r: Response;
+  try {
+    r = await fetch(`${base}/${path}`, { ...init, signal: ctrl.signal });
+  } catch (e) {
+    clearTimeout(timer);
+    throw e;
+  }
+  if (!r.ok || !r.body) {
+    clearTimeout(timer);
+    throw new Error(`HTTP ${r.status}`);
+  }
   const reader = r.body.getReader();
   const dec = new TextDecoder();
   let buf = "";
@@ -58,6 +80,7 @@ export async function* sse(path: string, init: RequestInit = {}): AsyncGenerator
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+      arm();
       buf += dec.decode(value, { stream: true });
       let nl: number;
       while ((nl = buf.indexOf("\n")) >= 0) {
@@ -78,6 +101,7 @@ export async function* sse(path: string, init: RequestInit = {}): AsyncGenerator
       }
     }
   } finally {
+    clearTimeout(timer);
     reader.releaseLock();
   }
 }

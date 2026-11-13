@@ -9,6 +9,8 @@ const PATH = join(CONFIG_DIR, "prefs.json");
 export interface Prefs {
   /** Deliver held cross-session messages and pick an agent's recommended option without asking. */
   autoDeliver: boolean;
+  /** Install a newer Floe by itself once no agent is waiting on you (on unless you turn it off). */
+  autoUpdate: boolean;
 }
 
 function read(): Partial<Prefs> {
@@ -19,10 +21,12 @@ function read(): Partial<Prefs> {
   }
 }
 
-export const prefs: Prefs = { autoDeliver: read().autoDeliver === true };
+const saved = read();
+export const prefs: Prefs = { autoDeliver: saved.autoDeliver === true, autoUpdate: saved.autoUpdate !== false };
 
 export function setPrefs(p: Partial<Prefs>): Prefs {
   if (typeof p.autoDeliver === "boolean") prefs.autoDeliver = p.autoDeliver;
+  if (typeof p.autoUpdate === "boolean") prefs.autoUpdate = p.autoUpdate;
   mkdirSync(CONFIG_DIR, { recursive: true });
   writeFileSync(PATH, JSON.stringify(prefs, null, 2) + "\n");
   return prefs;

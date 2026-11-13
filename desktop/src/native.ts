@@ -1,7 +1,7 @@
 // The Rust side: window geometry, keyboard, launch at login, the proxy supervisor.
 // Outside Tauri (plain `vite` in a browser) every call is a harmless no-op.
 
-import type { Boot, ProxyState } from "./types";
+import type { Boot, HotkeyHelp, ProxyState } from "./types";
 
 type Unlisten = () => void;
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -27,12 +27,14 @@ export const native = {
   dragEnd: () => call("drag_end"),
   snapCenter: () => call("snap_center"),
   takeFocus: () => call("take_focus"),
-  releaseFocus: () => call("release_focus"),
+  releaseFocus: (handBack = true) => call("release_focus", { handBack }),
+  allowForeground: () => call("allow_foreground").catch(() => {}),
   proxyState: () => call<ProxyState | null>("proxy_state"),
   autostartGet: () => call<boolean>("autostart_get"),
   autostartSet: (on: boolean) => call<boolean>("autostart_set", { on }),
   openLogs: () => call("open_logs"),
   openUrl: (url: string) => call("open_url", { url }),
+  gnomeShortcut: (free: boolean) => call<HotkeyHelp>("gnome_shortcut", { free }),
   quit: () => call("quit"),
   log: (msg: string) => call("log_line", { msg }).catch(() => {}),
 };

@@ -1,7 +1,9 @@
 // Settings: what this app keeps (sound, banners, border, launch at login), what the proxy keeps
 // (auto-deliver), and where things are when something's wrong.
 
+import { useEffect, useState } from "preact/hooks";
 import { native } from "../native";
+import type { HotkeyHelp } from "../types";
 import {
   autoDeliver,
   autostart,
@@ -12,8 +14,13 @@ import {
   proxyOnline,
   proxyState,
   setAutoDeliver,
+  autoUpdate,
+  loadUpdate,
   setAutostart,
+  setAutoUpdate,
   sound,
+  update,
+  updateNow,
 } from "../store";
 import { SmallButton, Toggle } from "./parts";
 
@@ -27,12 +34,40 @@ const PROXY_LABEL: Record<string, string> = {
   offline: "Not answering",
 };
 
+const INSTALL: Record<string, string> = {
+  linux: "curl -fsSL https://raw.githubusercontent.com/mukhayyar/floe/main/install.sh | bash",
+  macos: "curl -fsSL https://raw.githubusercontent.com/mukhayyar/floe/main/install.sh | bash",
+  windows: "irm https://raw.githubusercontent.com/mukhayyar/floe/main/install.ps1 | iex",
+};
+
 export function SettingsView() {
   const b = boot.value;
   const p = proxyState.value;
   const ok = proxyOnline.value;
+  const u = update.value;
+  useEffect(() => void loadUpdate(true), []);
   return (
     <div class="scroll settings">
+      {u?.newer && (
+        <div class="setting update">
+          <div class="label">
+            Floe {u.latest} is out <span class="faint">(you have {u.current})</span>
+          </div>
+          {u.updating ? (
+            <div class="soft">Updating… Floe closes and opens again in a moment.</div>
+          ) : u.canUpdate ? (
+            <div class="row gap6 wrap">
+              <SmallButton title="Update now" icon="down" onClick={updateNow} />
+              {u.url && <SmallButton title="What's new" icon="open" onClick={() => native.openUrl(u.url!)} />}
+            </div>
+          ) : (
+            <>
+              <div class="soft">This Floe runs from a source checkout. Update it with git pull, or install it with:</div>
+              <code class="cmd">{INSTALL[b?.platform ?? "linux"]}</code>
+            </>
+          )}
+        </div>
+      )}
       <Toggle on={sound.value} onChange={(v) => (sound.value = v)}>
         Play a sound when an agent asks something
       </Toggle>
@@ -48,6 +83,10 @@ export function SettingsView() {
           Delivers messages held from other sessions and picks the option an agent marks “Recommended”, without asking. Permission prompts still wait for you.
         </small>
       </Toggle>
+      <Toggle on={autoUpdate.value} onChange={setAutoUpdate} disabled={!ok}>
+        <span>Update Floe automatically</span>
+        <small>Installs a new release by itself once no agent is waiting on you. Floe closes and opens again while it updates.</small>
+      </Toggle>
       {native.inTauri && (
         <Toggle on={autostart.value === true} onChange={setAutostart} disabled={autostart.value === null}>
           <span>Launch at login</span>
@@ -62,6 +101,7 @@ export function SettingsView() {
           "hotkey" in ~/.config/floe/config.json, then restart Floe.
         </div>
         {b?.hotkeyError && <div class="error">{b.hotkeyError}</div>}
+        {b?.hotkeyHelp?.wayland && <WaylandHotkey help={b.hotkeyHelp} keys={prettyHotkey(b.hotkey ?? "alt+space")} />}
       </div>
 
       <div class="setting">
@@ -91,6 +131,39 @@ export function SettingsView() {
         {b?.logsDir ? ` · logs in ${b.logsDir}` : ""}
       </div>
     </div>
+  );
+}
+
+/**
+ * Wayland doesn't let apps listen for keys, so the hotkey only works while an X11 window is in
+ * front, unless the desktop runs `floe --toggle` for it. On GNOME Floe adds that shortcut itself.
+ */
+function WaylandHotkey(p: { help: HotkeyHelp; keys: string }) {
+  const [help, setHelp] = useState(p.help);
+  const [err, setErr] = useState<string | null>(null);
+  const add = async () => {
+    setErr(null);
+    try {
+      const next = await native.gnomeShortcut(!!help.conflict);
+      if (next) setHelp(next);
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+  if (help.bound) return <div class="soft">GNOME runs Floe for <kbd>{p.keys}</kbd> (Settings → Keyboard → Custom Shortcuts → Floe).</div>;
+  return (
+    <>
+      <div class="soft">
+        On Wayland, Floe only hears <kbd>{p.keys}</kbd> while another X11 app is in front. Give your desktop a keyboard shortcut that runs:
+      </div>
+      <code class="cmd">{help.command}</code>
+      {help.gnome && (
+        <div class="row gap6 wrap">
+          <SmallButton title={help.conflict ? `Add it, taking ${p.keys} from ${help.conflict}` : "Add the shortcut"} icon="keyboard" onClick={add} />
+        </div>
+      )}
+      {err && <div class="error">{err}</div>}
+    </>
   );
 }
 

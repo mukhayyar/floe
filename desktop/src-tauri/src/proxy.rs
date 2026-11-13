@@ -73,7 +73,7 @@ fn server_script() -> PathBuf {
     paths::install_dir().join("proxy").join("src").join("server.ts")
 }
 
-fn spawn(bun: &PathBuf, script: &PathBuf) -> std::io::Result<Child> {
+fn spawn(bun: &PathBuf, script: &PathBuf, port: u16) -> std::io::Result<Child> {
     let logs = paths::logs_dir();
     fs::create_dir_all(&logs)?;
     let log = OpenOptions::new().create(true).append(true).open(logs.join("proxy.log"))?;
@@ -84,6 +84,12 @@ fn spawn(bun: &PathBuf, script: &PathBuf) -> std::io::Result<Child> {
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(err));
+    // The port Floe watches (FLOE_PORT or config.json) is the port the proxy takes.
+    cmd.env("FLOE_PORT", port.to_string());
+    // A dev build's UI comes from Vite on localhost:1420; only then may that origin drive the proxy.
+    if cfg!(debug_assertions) {
+        cmd.env("FLOE_DEV", "1");
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -106,7 +112,10 @@ fn spawn(bun: &PathBuf, script: &PathBuf) -> std::io::Result<Child> {
     Ok(child)
 }
 
-/// Windows: a job object that kills its processes when Floe's handle to it closes (Floe exits).
+/// Windows: a job object that kills the proxy when Floe's handle to it closes (Floe exits). Only
+/// the proxy itself: what it starts (Orca when you open it from Floe, an update, the Orca bridge,
+/// which exits when its input closes) is left out of the job, so quitting Floe never takes Orca
+/// and its agents down with it.
 #[cfg(windows)]
 fn tie_to_us(child: &Child) {
     use std::os::windows::io::AsRawHandle;
@@ -119,7 +128,7 @@ fn tie_to_us(child: &Child) {
             return 0;
         }
         let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
         SetInformationJobObject(
             job,
             JobObjectExtendedLimitInformation,
@@ -172,8 +181,9 @@ pub fn start(app: AppHandle, sup: Arc<Supervisor>, port: u16) {
                     owned,
                 }
             } else if owned {
-                // Booting: give it a while before calling it stuck.
-                let waited = started_at.map(|t| t.elapsed()).unwrap_or_default();
+                // Booting, or it was up and stopped answering: give it a while before calling it
+                // stuck (a wedged proxy must not sit there "starting" forever).
+                let waited = started_at.get_or_insert_with(Instant::now).elapsed();
                 if waited > Duration::from_secs(40) {
                     sup.shutdown();
                     started_at = None;
@@ -214,7 +224,7 @@ pub fn start(app: AppHandle, sup: Arc<Supervisor>, port: u16) {
                             thread::sleep(backoff);
                             backoff = (backoff * 2).min(Duration::from_secs(30));
                         }
-                        match spawn(&bun, &script) {
+                        match spawn(&bun, &script, port) {
                             Ok(child) => {
                                 crate::log::line(&format!("started the proxy (pid {}) with {}", child.id(), bun.display()));
                                 if let Ok(mut c) = sup.child.lock() {

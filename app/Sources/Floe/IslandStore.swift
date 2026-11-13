@@ -37,6 +37,10 @@ final class IslandStore: ObservableObject {
     @Published var border: Bool { didSet { UserDefaults.standard.set(border, forKey: "border") } }
     /// Kept by the proxy (it answers even while Floe is closed): deliver held messages, pick recommended options.
     @Published var autoDeliver = false
+    /// A newer Floe on GitHub, from the proxy. Nil when this one is current.
+    @Published var update: (latest: String, current: String, url: URL?, canUpdate: Bool, updating: Bool)? = nil
+    /// Kept by the proxy: install a newer Floe by itself once no agent is waiting on you.
+    @Published var autoUpdate = true
 
     /// Set by the window controller: give the panel keyboard focus.
     var requestKey: (() -> Void)?
@@ -251,7 +255,7 @@ final class IslandStore: ObservableObject {
                 req.timeoutInterval = 60
                 do {
                     for try await ev in sseStream(req) {
-                        if !proxyOnline { proxyOnline = true; Task { await loadPrefs() } }
+                        if !proxyOnline { proxyOnline = true; Task { await loadPrefs(); await loadUpdate() } }
                         backoff = 1
                         handle(ev)
                     }
@@ -606,11 +610,42 @@ final class IslandStore: ObservableObject {
         }
     }
 
+    /// Is a newer Floe out? `check` asks GitHub now (the proxy does it at most every 10 minutes).
+    func loadUpdate(check: Bool = false) async {
+        guard let url = URL(string: "\(base)/version\(check ? "?check=1" : "")"),
+              let (data, _) = try? await URLSession.shared.data(from: url),
+              let j = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+        if j["newer"] as? Bool == true, let latest = j["latest"] as? String {
+            update = (latest, j["current"] as? String ?? "", (j["url"] as? String).flatMap(URL.init(string:)),
+                      j["canUpdate"] as? Bool ?? false, j["updating"] as? Bool ?? false)
+        } else {
+            update = nil
+        }
+    }
+
+    /// Install the latest Floe now: the installer stops Floe, updates it and starts it again.
+    func updateNow() {
+        Task {
+            let r = await post("update", [:])
+            say(r.message.isEmpty ? (r.ok ? "Updating Floe…" : "Couldn't update Floe") : r.message)
+            await loadUpdate()
+        }
+    }
+
+    func setAutoUpdate(_ on: Bool) {
+        autoUpdate = on
+        Task {
+            let r = await post("prefs", ["autoUpdate": on])
+            if !r.ok { autoUpdate = !on; say(r.message.isEmpty ? "Couldn't change auto-update" : r.message) }
+        }
+    }
+
     private func loadPrefs() async {
         guard let url = URL(string: "\(base)/prefs"),
               let (data, _) = try? await URLSession.shared.data(from: url),
               let j = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
         autoDeliver = j["autoDeliver"] as? Bool ?? false
+        autoUpdate = j["autoUpdate"] as? Bool ?? true
     }
 
     private func loadChat() async {

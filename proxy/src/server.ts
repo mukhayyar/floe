@@ -3,8 +3,10 @@
 //   GET  /health                     liveness
 //   GET  /status                     snapshot: hosts → projects → workspaces, agents with step timelines
 //   GET  /events                     SSE: `snapshot` on every change, `activity` on transitions
-//   GET  /prefs                      {autoDeliver}: settings Floe changes from its Settings tab
-//   POST /prefs                      {autoDeliver}  deliver held messages / pick recommended options for you
+//   GET  /version                    {current, latest, newer, url, canUpdate, updating}: is a newer Floe out (?check=1 asks now)
+//   POST /update                     install the latest Floe now (the installer restarts Floe)
+//   GET  /prefs                      {autoDeliver, autoUpdate}: settings Floe changes from its Settings tab
+//   POST /prefs                      {autoDeliver?, autoUpdate?}  answer for you / install updates by itself
 //   GET  /agents/:id/screen          what the agent's terminal shows + parsed menu options
 //   POST /agents/:id/answer          {option:n} | {text}  answer a question / send a follow-up
 //   POST /agents/:id/focus           jump to that agent in Orca
@@ -29,6 +31,16 @@ import { OrcaWatcher } from "./orca";
 import { DemoWatcher } from "./demo";
 import { Sages } from "./sages";
 import { prefs, setPrefs } from "./prefs";
+import { checkNow, installNow, update, watchUpdates } from "./update";
+
+// Every log line says when (local time), so proxy.log can tell an old error from a new one.
+for (const k of ["log", "warn", "error"] as const) {
+  const out = console[k].bind(console);
+  console[k] = (...args: unknown[]) => out(new Date().toLocaleString("sv-SE"), ...args);
+}
+// A stray rejected promise (a cleared cache, a host dropping mid-call) is logged, not fatal: a
+// restart would drop held answers and timelines.
+process.on("unhandledRejection", (e) => console.error("[unhandled]", e));
 
 const cfg = loadConfig();
 // FLOE_DEMO=1 runs against a made-up Orca (screenshots, videos, trying Floe without Orca).
@@ -38,6 +50,7 @@ orca.start();
 const sages = new Sages(() => orca.snapshot.hosts);
 setTimeout(() => sages.warm(), 8000);
 setInterval(() => sages.warm(), 60_000);
+watchUpdates(cfg, () => !orca.snapshot.counts.attention && !brain.busy);
 
 const enc = new TextEncoder();
 const sse = (event: string, data: unknown) => enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -48,7 +61,8 @@ const SSE_HEADERS = { "content-type": "text/event-stream", "cache-control": "no-
 // Only Floe may drive this proxy. The Mac app sends no Origin; the Linux/Windows app is a Tauri
 // webview. A web page in a browser always sends its Origin on cross-site requests, so anything
 // else is refused: otherwise any site could type into your terminals through localhost.
-const ORIGINS = new Set(["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost", "http://localhost:1420"]);
+// The Vite dev server's origin counts only for a dev build of the app (it sets FLOE_DEV).
+const ORIGINS = new Set(["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost", ...(process.env.FLOE_DEV ? ["http://localhost:1420"] : [])]);
 const HOSTS = new Set([`127.0.0.1:${cfg.port}`, `localhost:${cfg.port}`, `[::1]:${cfg.port}`]);
 function cors(origin: string | null): Record<string, string> {
   return origin && ORIGINS.has(origin)
@@ -155,9 +169,18 @@ async function route(req: Request): Promise<Response> {
     if (m === "GET" && p === "/status") return json(orca.snapshot);
     if (m === "GET" && p === "/events") return events(req);
     if (m === "GET" && p === "/prefs") return json({ ok: true, ...prefs });
+    if (m === "GET" && p === "/version") {
+      const ask = url.searchParams.has("check") && cfg.checkUpdates !== false && Date.now() - (update.checkedAt ?? 0) > 600_000;
+      return json({ ok: true, ...(ask ? await checkNow() : update) });
+    }
+    if (m === "POST" && p === "/update") {
+      if (!update.newer) await checkNow();
+      const r = await installNow("you");
+      return r.ok ? json({ ok: true, result: r.message }) : json({ ok: false, error: r.message }, 409);
+    }
     if (m === "POST" && p === "/prefs") {
       const next = setPrefs(await body(req));
-      console.log(`[prefs] autoDeliver ${next.autoDeliver ? "on" : "off"}`);
+      console.log(`[prefs] autoDeliver ${next.autoDeliver ? "on" : "off"}, autoUpdate ${next.autoUpdate ? "on" : "off"}`);
       setTimeout(() => orca.poll(), 50); // act on prompts that are already waiting
       return json({ ok: true, ...next });
     }

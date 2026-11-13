@@ -211,7 +211,7 @@ function Expanded() {
         <TabButton title="Ask" on={t === "ask"} onClick={() => (tab.value = "ask")} />
         <IconButton icon="gear" on={t === "settings"} onClick={() => (tab.value = t === "settings" ? "live" : "settings")} tip="Settings" />
         <IconButton icon={pinned.value ? "pinFill" : "pin"} on={pinned.value} onClick={() => (pinned.value = !pinned.value)} tip="Keep open when clicking elsewhere" />
-        <IconButton icon="up" onClick={collapse} tip="Fold up (Esc)" />
+        <IconButton icon="up" onClick={() => collapse()} tip="Fold up (Esc)" />
       </div>
       <div class="divider" />
       <div class="tab-body">{t === "live" ? <LiveView /> : t === "hosts" ? <HostsView /> : t === "ask" ? <ChatView /> : <SettingsView />}</div>

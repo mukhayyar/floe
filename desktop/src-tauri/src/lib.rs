@@ -9,6 +9,7 @@ mod focus;
 mod log;
 mod paths;
 mod proxy;
+mod shortcut;
 
 use std::sync::{Arc, Mutex};
 
@@ -97,6 +98,8 @@ struct Boot {
     logs_dir: String,
     /// `FLOE_OPEN=live|hosts|ask|settings`: open on that tab at start (testing, screenshots).
     open: Option<String>,
+    /// Wayland: the hotkey needs a desktop shortcut that runs `floe --toggle`.
+    hotkey_help: shortcut::HotkeyHelp,
 }
 
 #[tauri::command]
@@ -123,7 +126,21 @@ fn boot(app: AppHandle, win: WebviewWindow) -> Boot {
         proxy: app.state::<Arc<proxy::Supervisor>>().snapshot(),
         logs_dir: paths::logs_dir().display().to_string(),
         open: std::env::var("FLOE_OPEN").ok().filter(|v| !v.is_empty()),
+        hotkey_help: shortcut::help(&cfg.hotkey),
     }
+}
+
+/// GNOME on Wayland: add the desktop shortcut for the hotkey (`free` takes the key back from
+/// GNOME's own use of it, such as Alt+Space for the window menu).
+#[tauri::command]
+fn gnome_shortcut(free: bool) -> Result<shortcut::HotkeyHelp, String> {
+    let cfg = config::load();
+    let res = shortcut::bind_gnome(&cfg.hotkey, free);
+    match &res {
+        Ok(_) => log::line(&format!("GNOME shortcut {} → {}{}", cfg.hotkey, shortcut::command(), if free { " (taken from GNOME)" } else { "" })),
+        Err(e) => log::line(&format!("couldn't add the GNOME shortcut: {e}")),
+    }
+    res
 }
 
 /// The UI asks for a size (pill, peek, panel); the window keeps its centre and shows itself the
@@ -187,14 +204,20 @@ fn take_focus(win: WebviewWindow, focus: tauri::State<focus::Focus>) {
     log::line("panel took the keyboard");
 }
 
-/// Folding up: clicks stop activating Floe and the keyboard goes back.
+/// Folding up: clicks stop activating Floe and the keyboard goes back (`hand_back: false` when
+/// Floe just asked Orca to come forward, so the keyboard goes to Orca rather than the game).
 #[tauri::command]
-fn release_focus(win: WebviewWindow, focus: tauri::State<focus::Focus>) {
-    let had = win.is_focused().unwrap_or(false);
-    focus.release(&win);
-    if had {
-        log::line("panel gave the keyboard back");
+fn release_focus(win: WebviewWindow, focus: tauri::State<focus::Focus>, hand_back: Option<bool>) {
+    let hand_back = hand_back.unwrap_or(true);
+    if focus.release(&win, hand_back) {
+        log::line(if hand_back { "panel gave the keyboard back" } else { "panel let go of the keyboard (for Orca)" });
     }
+}
+
+/// Before asking Orca to come forward: Windows only lets the foreground app hand that over.
+#[tauri::command]
+fn allow_foreground(focus: tauri::State<focus::Focus>) {
+    focus.allow_foreground();
 }
 
 #[tauri::command]
@@ -321,14 +344,31 @@ pub fn run() {
         if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         }
+        // An unpacked AppImage (no FUSE 2) runs through AppRun, which sets APPDIR but not
+        // APPIMAGE. Launch at login and `--toggle` must start AppRun too, not the bare binary
+        // without AppRun's library setup.
+        if std::env::var_os("APPIMAGE").is_none() {
+            if let Some(dir) = std::env::var_os("APPDIR") {
+                let run = std::path::Path::new(&dir).join("AppRun");
+                if run.exists() {
+                    std::env::set_var("APPIMAGE", run);
+                }
+            }
+        }
     }
 
     let supervisor = Arc::new(proxy::Supervisor::default());
     let sup_for_exit = supervisor.clone();
 
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            let _ = app.emit("tray", "open");
+        // Starting Floe again opens the running one; `floe --toggle` (a desktop shortcut on
+        // Wayland) opens or folds it like the hotkey.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if args.iter().any(|a| a == "--toggle") {
+                let _ = app.emit("hotkey", ());
+            } else {
+                let _ = app.emit("tray", "open");
+            }
         }))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -360,6 +400,8 @@ pub fn run() {
             open_logs,
             open_url,
             log_line,
+            gnome_shortcut,
+            allow_foreground,
             quit
         ])
         .setup(move |app| {
@@ -392,9 +434,29 @@ pub fn run() {
                 let app = app.handle().clone();
                 move |e| match e {
                     WindowEvent::Focused(false) => {
-                        let _ = app.emit("blur", ());
+                        // On X11 a key grab (the hotkey itself) reads as a focus loss while Floe
+                        // is still the active window: that's not you clicking elsewhere. Ask the
+                        // window manager a moment later, once a real click has moved focus.
+                        if cfg!(target_os = "linux") {
+                            let app = app.clone();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_millis(150));
+                                let still = app.get_webview_window("main").map(|w| app.state::<focus::Focus>().focused(&w)).unwrap_or(false);
+                                if !still {
+                                    let _ = app.emit("blur", ());
+                                }
+                            });
+                        } else {
+                            let _ = app.emit("blur", ());
+                        }
                     }
                     WindowEvent::ScaleFactorChanged { .. } => {
+                        // keep the island on its anchor at the new scale
+                        if let Some(w) = app.get_webview_window("main") {
+                            let geo = app.state::<Geometry>();
+                            let (sw, sh) = geo.size.lock().map(|z| *z).unwrap_or((112.0, 32.0));
+                            place(&w, &geo, sw, sh, None);
+                        }
                         let _ = app.emit("screen", ());
                     }
                     _ => {}

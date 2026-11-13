@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import preact from "@preact/preset-vite";
 
-// Tauri expects a fixed dev port (1420 is on the proxy's CORS list) and no screen clearing.
+// Tauri expects a fixed dev port (the proxy allows 1420 when started with FLOE_DEV=1) and no screen clearing.
 export default defineConfig({
   plugins: [preact()],
   clearScreen: false,

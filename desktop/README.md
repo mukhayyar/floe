@@ -16,7 +16,7 @@ bun run dev                          # or just the UI in a browser: http://local
 ```
 
 - The proxy must be running (`../proxy`, on `127.0.0.1:7717` or `port` in `~/.config/floe/config.json`).
-- It answers only Floe's own origins (`tauri://localhost`, `http(s)://tauri.localhost`, `http://localhost:1420`).
+- It answers only Floe's own origins (`tauri://localhost`, `http(s)://tauri.localhost`). Vite's `http://localhost:1420` counts only when the proxy runs with `FLOE_DEV=1`, which a dev build of the app sets when it starts the proxy; set it yourself for `bun run dev` in a browser.
 - In a browser, `?port=7799` points the UI at another proxy (for example `FLOE_DEMO=1` on a scratch `HOME`).
 - `?open=live|hosts|ask|settings` opens it on that tab.
 

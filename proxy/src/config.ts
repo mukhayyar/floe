@@ -31,6 +31,8 @@ export interface Config {
   extraDirs: string[];
   /** Tools the brain may use without asking. Anything else is denied (no one is there to approve). */
   allowedTools: string[];
+  /** Ask GitHub twice a day whether a newer Floe is out (shown in Settings). */
+  checkUpdates: boolean;
 }
 
 const DEFAULTS: Config = {
@@ -57,6 +59,7 @@ const DEFAULTS: Config = {
     "WebSearch",
     "WebFetch",
   ],
+  checkUpdates: true,
 };
 
 function readJson<T>(path: string): Partial<T> {
@@ -74,7 +77,11 @@ export function loadConfig(): Config {
     const { allowedTools, ...rest } = DEFAULTS;
     writeFileSync(CONFIG_PATH, JSON.stringify({ model: rest.model, port: rest.port, extraDirs: [] }, null, 2) + "\n");
   }
-  return { ...DEFAULTS, ...readJson<Config>(CONFIG_PATH) };
+  const cfg = { ...DEFAULTS, ...readJson<Config>(CONFIG_PATH) };
+  // The app passes the port it watches (FLOE_PORT, or config.json's).
+  const port = Number(process.env.FLOE_PORT);
+  if (Number.isInteger(port) && port > 0 && port < 65536) cfg.port = port;
+  return cfg;
 }
 
 export interface ChatMessage {
