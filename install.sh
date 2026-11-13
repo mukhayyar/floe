@@ -179,6 +179,9 @@ fetch() {
 
 if [[ "$VERSION" == "latest" ]]; then
   VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1 || true)"
+  # GitHub's API allows 60 requests an hour per address (a shared or busy network runs out); the
+  # release page's redirect to the newest tag has no such limit
+  [[ -n "$VERSION" ]] || VERSION="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" 2>/dev/null | sed -n 's#.*/releases/tag/\([^/?]*\).*#\1#p' || true)"
 fi
 if [[ -n "$VERSION" ]]; then
   say "Downloading Floe $VERSION"
@@ -202,7 +205,8 @@ if [[ "$OS" == "Linux" ]]; then
   if [[ $FROM_SOURCE == 1 ]]; then
     command -v cargo >/dev/null 2>&1 || die "Building Floe needs Rust (https://rustup.rs) and Tauri's libraries (see desktop/README.md)."
     say "Building Floe (a few minutes)"
-    (cd "$SRC/desktop" && "$BUN" install >/dev/null && "$BUN" x tauri build --no-bundle >/dev/null) || die "The build failed. See desktop/README.md for the libraries it needs."
+    # Tauri runs `bun run build` itself, so Bun must be on PATH (it may have just been installed)
+    (cd "$SRC/desktop" && export PATH="$(dirname "$BUN"):$PATH" && "$BUN" install >/dev/null && "$BUN" x tauri build --no-bundle >/dev/null) || die "The build failed. See desktop/README.md for the libraries it needs."
     BUILT="$(find "$SRC/desktop" -path '*/target/release/floe' -type f | head -1)"
     [[ -x "$BUILT" ]] || die "The build didn't produce Floe."
   fi

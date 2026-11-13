@@ -52,22 +52,34 @@ export function compare(a: string, b: string): number {
   return 0;
 }
 
-export async function checkNow(): Promise<UpdateInfo> {
+/** The newest release's tag and page: GitHub's API, else the release page's redirect to it. */
+async function latestRelease(): Promise<{ tag: string; url: string } | null> {
+  const headers = { "user-agent": `floe/${VERSION}` };
   try {
-    const res = await fetch(LATEST, {
-      headers: { accept: "application/vnd.github+json", "user-agent": `floe/${VERSION}` },
-      signal: AbortSignal.timeout(10_000),
-    });
+    const res = await fetch(LATEST, { headers: { ...headers, accept: "application/vnd.github+json" }, signal: AbortSignal.timeout(10_000) });
     if (res.ok) {
       const r: any = await res.json();
-      if (typeof r?.tag_name === "string" && !r.draft && !r.prerelease) {
-        update.latest = r.tag_name.replace(/^v/, "");
-        update.url = typeof r.html_url === "string" ? r.html_url : null;
-        update.newer = compare(update.latest!, VERSION) > 0;
-        if (update.newer) console.log(`[update] Floe ${update.latest} is out (this is ${VERSION})`);
-      }
+      if (typeof r?.tag_name === "string" && !r.draft && !r.prerelease) return { tag: r.tag_name, url: r.html_url ?? "" };
     }
-  } catch {} // offline, rate-limited: try again next time
+  } catch {}
+  // The API allows 60 requests an hour per address (a shared network runs out); the page doesn't.
+  try {
+    const res = await fetch(`https://github.com/${REPO}/releases/latest`, { headers, redirect: "manual", signal: AbortSignal.timeout(10_000) });
+    const to = res.headers.get("location") ?? "";
+    const tag = to.match(/\/releases\/tag\/([^/?#]+)/)?.[1];
+    if (tag) return { tag: decodeURIComponent(tag), url: to };
+  } catch {}
+  return null;
+}
+
+export async function checkNow(): Promise<UpdateInfo> {
+  const r = await latestRelease(); // offline: try again next time
+  if (r) {
+    update.latest = r.tag.replace(/^v/, "");
+    update.url = r.url || null;
+    update.newer = compare(update.latest, VERSION) > 0;
+    if (update.newer) console.log(`[update] Floe ${update.latest} is out (this is ${VERSION})`);
+  }
   update.checkedAt = Date.now();
   return update;
 }

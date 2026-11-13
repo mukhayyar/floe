@@ -96,6 +96,14 @@ function Fetch($url, $out) {
 try {
   if ($Version -eq "latest") {
     try { $Version = (Invoke-RestMethod -UseBasicParsing "https://api.github.com/repos/$Repo/releases/latest").tag_name } catch { $Version = "" }
+    if (-not $Version) {
+      # GitHub's API allows 60 requests an hour per address; the release page's redirect has no such limit
+      try {
+        $r = Invoke-WebRequest -UseBasicParsing -Method Head "https://github.com/$Repo/releases/latest"
+        $u = if ($r.BaseResponse.ResponseUri) { $r.BaseResponse.ResponseUri } else { $r.BaseResponse.RequestMessage.RequestUri }
+        if ("$u" -match "/releases/tag/([^/?]+)") { $Version = $Matches[1] }
+      } catch { $Version = "" }
+    }
   }
   if (-not $Version) { Die "Couldn't find a Floe release. Check your connection and try again." }
   Say "Downloading Floe $Version"
