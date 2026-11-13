@@ -30,6 +30,15 @@ import { DemoWatcher } from "./demo";
 import { Sages } from "./sages";
 import { prefs, setPrefs } from "./prefs";
 
+// Every log line says when (local time), so proxy.log can tell an old error from a new one.
+for (const k of ["log", "warn", "error"] as const) {
+  const out = console[k].bind(console);
+  console[k] = (...args: unknown[]) => out(new Date().toLocaleString("sv-SE"), ...args);
+}
+// A stray rejected promise (a cleared cache, a host dropping mid-call) is logged, not fatal: a
+// restart would drop held answers and timelines.
+process.on("unhandledRejection", (e) => console.error("[unhandled]", e));
+
 const cfg = loadConfig();
 // FLOE_DEMO=1 runs against a made-up Orca (screenshots, videos, trying Floe without Orca).
 const orca = (process.env.FLOE_DEMO ? new DemoWatcher() : new OrcaWatcher(cfg)) as OrcaWatcher;
@@ -48,7 +57,8 @@ const SSE_HEADERS = { "content-type": "text/event-stream", "cache-control": "no-
 // Only Floe may drive this proxy. The Mac app sends no Origin; the Linux/Windows app is a Tauri
 // webview. A web page in a browser always sends its Origin on cross-site requests, so anything
 // else is refused: otherwise any site could type into your terminals through localhost.
-const ORIGINS = new Set(["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost", "http://localhost:1420"]);
+// The Vite dev server's origin counts only for a dev build of the app (it sets FLOE_DEV).
+const ORIGINS = new Set(["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost", ...(process.env.FLOE_DEV ? ["http://localhost:1420"] : [])]);
 const HOSTS = new Set([`127.0.0.1:${cfg.port}`, `localhost:${cfg.port}`, `[::1]:${cfg.port}`]);
 function cors(origin: string | null): Record<string, string> {
   return origin && ORIGINS.has(origin)

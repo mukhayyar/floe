@@ -84,6 +84,10 @@ fn spawn(bun: &PathBuf, script: &PathBuf) -> std::io::Result<Child> {
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(err));
+    // A dev build's UI comes from Vite on localhost:1420; only then may that origin drive the proxy.
+    if cfg!(debug_assertions) {
+        cmd.env("FLOE_DEV", "1");
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

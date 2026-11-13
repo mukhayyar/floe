@@ -724,10 +724,19 @@ export async function start() {
     if (port > 0) setPort(port);
   }
   on<ProxyState>("proxy", (p) => (proxyState.value = p));
-  on("hotkey", () => toggle());
+  // On X11 the hotkey's own key grab takes the keyboard from Floe a moment before the hotkey
+  // arrives. That blur already folded Floe up, which is what this press asked for: don't reopen.
+  let blurredAt = 0;
+  on("hotkey", () => {
+    if (presentation.value === "compact" && Date.now() - blurredAt < 400) return;
+    toggle();
+  });
   on<string>("tray", (what) => (what === "settings" ? expand({ tab: "settings" }) : expand({ focus: true })));
   on("blur", () => {
-    if (presentation.value === "expanded" && !pinned.value) collapse();
+    if (presentation.value === "expanded" && !pinned.value) {
+      blurredAt = Date.now();
+      collapse();
+    }
   });
   on("screen", async () => {
     const nb = await native.boot();

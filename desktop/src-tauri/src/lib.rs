@@ -9,6 +9,7 @@ mod focus;
 mod log;
 mod paths;
 mod proxy;
+mod shortcut;
 
 use std::sync::{Arc, Mutex};
 
@@ -97,6 +98,8 @@ struct Boot {
     logs_dir: String,
     /// `FLOE_OPEN=live|hosts|ask|settings`: open on that tab at start (testing, screenshots).
     open: Option<String>,
+    /// Wayland: the hotkey needs a desktop shortcut that runs `floe --toggle`.
+    hotkey_help: shortcut::HotkeyHelp,
 }
 
 #[tauri::command]
@@ -123,7 +126,21 @@ fn boot(app: AppHandle, win: WebviewWindow) -> Boot {
         proxy: app.state::<Arc<proxy::Supervisor>>().snapshot(),
         logs_dir: paths::logs_dir().display().to_string(),
         open: std::env::var("FLOE_OPEN").ok().filter(|v| !v.is_empty()),
+        hotkey_help: shortcut::help(&cfg.hotkey),
     }
+}
+
+/// GNOME on Wayland: add the desktop shortcut for the hotkey (`free` takes the key back from
+/// GNOME's own use of it, such as Alt+Space for the window menu).
+#[tauri::command]
+fn gnome_shortcut(free: bool) -> Result<shortcut::HotkeyHelp, String> {
+    let cfg = config::load();
+    let res = shortcut::bind_gnome(&cfg.hotkey, free);
+    match &res {
+        Ok(_) => log::line(&format!("GNOME shortcut {} → {}{}", cfg.hotkey, shortcut::command(), if free { " (taken from GNOME)" } else { "" })),
+        Err(e) => log::line(&format!("couldn't add the GNOME shortcut: {e}")),
+    }
+    res
 }
 
 /// The UI asks for a size (pill, peek, panel); the window keeps its centre and shows itself the
@@ -327,8 +344,14 @@ pub fn run() {
     let sup_for_exit = supervisor.clone();
 
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            let _ = app.emit("tray", "open");
+        // Starting Floe again opens the running one; `floe --toggle` (a desktop shortcut on
+        // Wayland) opens or folds it like the hotkey.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if args.iter().any(|a| a == "--toggle") {
+                let _ = app.emit("hotkey", ());
+            } else {
+                let _ = app.emit("tray", "open");
+            }
         }))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -360,6 +383,7 @@ pub fn run() {
             open_logs,
             open_url,
             log_line,
+            gnome_shortcut,
             quit
         ])
         .setup(move |app| {

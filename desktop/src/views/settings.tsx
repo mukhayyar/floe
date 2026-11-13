@@ -1,7 +1,9 @@
 // Settings: what this app keeps (sound, banners, border, launch at login), what the proxy keeps
 // (auto-deliver), and where things are when something's wrong.
 
+import { useState } from "preact/hooks";
 import { native } from "../native";
+import type { HotkeyHelp } from "../types";
 import {
   autoDeliver,
   autostart,
@@ -62,6 +64,7 @@ export function SettingsView() {
           "hotkey" in ~/.config/floe/config.json, then restart Floe.
         </div>
         {b?.hotkeyError && <div class="error">{b.hotkeyError}</div>}
+        {b?.hotkeyHelp?.wayland && <WaylandHotkey help={b.hotkeyHelp} keys={prettyHotkey(b.hotkey ?? "alt+space")} />}
       </div>
 
       <div class="setting">
@@ -91,6 +94,39 @@ export function SettingsView() {
         {b?.logsDir ? ` · logs in ${b.logsDir}` : ""}
       </div>
     </div>
+  );
+}
+
+/**
+ * Wayland doesn't let apps listen for keys, so the hotkey only works while an X11 window is in
+ * front, unless the desktop runs `floe --toggle` for it. On GNOME Floe adds that shortcut itself.
+ */
+function WaylandHotkey(p: { help: HotkeyHelp; keys: string }) {
+  const [help, setHelp] = useState(p.help);
+  const [err, setErr] = useState<string | null>(null);
+  const add = async () => {
+    setErr(null);
+    try {
+      const next = await native.gnomeShortcut(!!help.conflict);
+      if (next) setHelp(next);
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+  if (help.bound) return <div class="soft">GNOME runs Floe for <kbd>{p.keys}</kbd> (Settings → Keyboard → Custom Shortcuts → Floe).</div>;
+  return (
+    <>
+      <div class="soft">
+        On Wayland, Floe only hears <kbd>{p.keys}</kbd> while another X11 app is in front. Give your desktop a keyboard shortcut that runs:
+      </div>
+      <code class="cmd">{help.command}</code>
+      {help.gnome && (
+        <div class="row gap6 wrap">
+          <SmallButton title={help.conflict ? `Add it, taking ${p.keys} from ${help.conflict}` : "Add the shortcut"} icon="keyboard" onClick={add} />
+        </div>
+      )}
+      {err && <div class="error">{err}</div>}
+    </>
   );
 }
 

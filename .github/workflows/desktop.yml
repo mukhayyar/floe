@@ -49,6 +49,15 @@ jobs:
           bun install --frozen-lockfile
           bun x tauri build --bundles ${{ matrix.bundles }}
 
+      - name: Rust tests (the GNOME shortcut against GNOME's real schemas, in a scratch store)
+        if: matrix.name == 'linux-x86_64'
+        working-directory: desktop/src-tauri
+        run: |
+          sudo apt-get install -y gnome-settings-daemon-common gsettings-desktop-schemas
+          export GSETTINGS_BACKEND=keyfile XDG_CONFIG_HOME=$(mktemp -d) FLOE_GSETTINGS_TEST=1
+          cargo test --lib -- --test-threads=1
+          cat "$XDG_CONFIG_HOME/glib-2.0/settings/keyfile"
+
       - name: Collect (Linux)
         if: runner.os == 'Linux'
         run: |

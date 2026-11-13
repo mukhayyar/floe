@@ -38,6 +38,13 @@ async function sage(): Promise<SageModule> {
   return (mod ??= (await import(join(SAGE_DIR, "sage.mjs"))) as SageModule);
 }
 
+/** The line that says what went wrong (`RangeError: …`) and where, not the tail of the stack. */
+function errorOf(stderr: string): string {
+  const lines = stderr.split("\n").map((l) => l.trim()).filter(Boolean);
+  const i = lines.findIndex((l) => /^\w*(Error|Exception)\b/.test(l));
+  return (i < 0 ? lines.slice(-3) : lines.slice(i, i + 3)).join(" | ").slice(0, 400) || "no output";
+}
+
 const stampOf = (files: string[]) => files.map((f) => Math.floor(statSync(join(SAGE_DIR, f)).mtimeMs)).join(".");
 const stamp = () => stampOf(["sage.mjs", "build.mjs", "palette.mjs"]);
 const sceneStamp = () => stampOf(["sage.mjs", "build.mjs", "palette.mjs", "scene.mjs"]);
@@ -110,9 +117,10 @@ export class Sages {
     if (Date.now() - (this.failed.get(key) ?? 0) < 10 * 60_000) return null;
     if (!this.pending.has(key)) {
       const job = this.queue.then(async () => {
+        mkdirSync(CACHE, { recursive: true });
         const proc = Bun.spawn([...NICE, process.execPath, join(SAGE_DIR, "build.mjs"), "--scene", `${png}.tmp.png`, "--scene-json", `${json}.tmp`], { stdout: "pipe", stderr: "pipe", windowsHide: true });
         lowPriority(proc.pid);
-        if ((await proc.exited) !== 0 || !existsSync(`${png}.tmp.png`)) throw new Error(`scene render failed: ${(await new Response(proc.stderr).text()).slice(-300)}`);
+        if ((await proc.exited) !== 0 || !existsSync(`${png}.tmp.png`)) throw new Error(`scene render failed: ${errorOf(await new Response(proc.stderr).text())}`);
         renameSync(`${json}.tmp`, json);
         renameSync(`${png}.tmp.png`, png);
         console.log("[sage] rendered the courtyard");
@@ -129,7 +137,9 @@ export class Sages {
     void Promise.all([this.scene().then((s) => [s?.png, s?.json]).catch(() => []), ...this.hosts().map((h) => this.sheet(h.id).catch(() => null))]).then(([scene, ...current]) => {
       // drop sheets no current host uses, once they are a day old
       const keep = new Set([...(scene as (string | undefined)[]), ...current].filter(Boolean));
-      for (const f of readdirSync(CACHE)) {
+      let files: string[] = [];
+      try { files = readdirSync(CACHE); } catch {} // the cache was cleared under us; nothing to drop
+      for (const f of files) {
         const p = join(CACHE, f);
         try { if (!keep.has(p) && Date.now() - statSync(p).mtimeMs > 86_400_000) rmSync(p, { force: true }); } catch {}
       }
@@ -137,6 +147,7 @@ export class Sages {
   }
 
   private async render(h: Host, salt: number, path: string): Promise<void> {
+    mkdirSync(CACHE, { recursive: true }); // macOS (or you) may have cleared the cache since start
     const tmp = `${path}.${process.pid}.tmp.png`;
     const started = Date.now();
     const proc = Bun.spawn(
@@ -147,7 +158,7 @@ export class Sages {
     const code = await proc.exited;
     if (code !== 0 || !existsSync(tmp)) {
       rmSync(tmp, { force: true });
-      throw new Error(`render failed (${code}): ${(await new Response(proc.stderr).text()).slice(-400)}`);
+      throw new Error(`render failed (${code}): ${errorOf(await new Response(proc.stderr).text())}`);
     }
     renameSync(tmp, path);
     console.log(`[sage] rendered ${h.name} in ${((Date.now() - started) / 1000).toFixed(1)}s`);

@@ -183,4 +183,14 @@ export interface Boot {
   proxy: ProxyState | null;
   logsDir: string;
   open?: string | null;
+  hotkeyHelp?: HotkeyHelp;
+}
+
+/** Wayland: the hotkey needs a desktop shortcut running `command`; on GNOME Floe can add it. */
+export interface HotkeyHelp {
+  wayland: boolean;
+  command: string;
+  gnome: boolean;
+  bound: boolean;
+  conflict: string | null;
 }
