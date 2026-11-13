@@ -180,10 +180,14 @@ export const currentWorkspaceKey = computed(() => {
 export const BAR = 32;
 export const TOP_INSET = 8;
 
+/** How much bigger the page draws than its CSS size (the desktop's text scale on Linux). */
+export const zoom = computed(() => boot.value?.zoom ?? 1);
+
 export const expandedSize = computed(() => {
   const b = boot.value;
-  const sw = b?.screenWidth ?? 1440;
-  const sh = b?.screenHeight ?? 900;
+  // in CSS pixels, which the page zoom makes bigger on screen
+  const sw = (b?.screenWidth ?? 1440) / zoom.value;
+  const sh = (b?.screenHeight ?? 900) / zoom.value;
   return { w: Math.round(Math.min(480, sw - 16)), h: Math.round(Math.min(600, sh * 0.74)) };
 });
 

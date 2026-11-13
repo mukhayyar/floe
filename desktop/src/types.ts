@@ -180,6 +180,8 @@ export interface Boot {
   platform: "linux" | "windows" | "macos";
   screenWidth: number;
   screenHeight: number;
+  /** Desktop text scale: WebKitGTK zooms the page by it (Linux), else 1. */
+  zoom?: number;
   proxy: ProxyState | null;
   logsDir: string;
   open?: string | null;

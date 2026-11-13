@@ -26,6 +26,7 @@ import {
   streaming,
   tab,
   TOP_INSET,
+  zoom,
 } from "./store";
 import type { Mood } from "./types";
 import { ChatView } from "./views/chat";
@@ -41,9 +42,11 @@ let shrinkTimer: number | undefined;
 
 function useWindowLayout() {
   const { w, h } = islandSize.value;
+  const z = zoom.value;
   useEffect(() => {
-    const W = w + EAR * 2;
-    const H = h + 2;
+    // the window is in screen pixels; the island is in CSS pixels, which the page zoom scales
+    const W = Math.ceil((w + EAR * 2) * z);
+    const H = Math.ceil((h + 2) * z);
     clearTimeout(shrinkTimer);
     if (!windowSize.w) {
       windowSize = { w: W, h: H };
@@ -61,7 +64,7 @@ function useWindowLayout() {
         native.layout(W, H);
       }, 380);
     }
-  }, [w, h]);
+  }, [w, h, z]);
 }
 
 const RIM: Record<Mood, [string, number]> = {

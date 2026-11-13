@@ -13,4 +13,4 @@ if (import.meta.env.DEV) (window as unknown as { __floe: typeof store }).__floe 
 
 startApp();
 render(<App />, document.getElementById("app")!);
-start().then(() => native.log(`ui up (${window.innerWidth}x${window.innerHeight}, ${document.querySelectorAll(".island").length} island)`));
+start().then(() => native.log(`ui up (${window.innerWidth}x${window.innerHeight}, zoom ${store.zoom.value}, ${document.querySelectorAll(".island").length} island)`));

@@ -38,6 +38,21 @@ struct Hotkey {
     error: Mutex<Option<String>>,
 }
 
+/// The desktop's text scale (GNOME's text-scaling-factor, as gtk-xft-dpi / 96). WebKitGTK zooms the
+/// whole page by it, so the UI makes the window that much bigger than the island. 1.0 elsewhere.
+static TEXT_ZOOM: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "linux")]
+fn read_text_zoom() -> f64 {
+    use gtk::prelude::*;
+    let dpi = gtk::Settings::default().map(|s| s.property::<i32>("gtk-xft-dpi")).unwrap_or(-1);
+    if dpi > 0 {
+        (dpi as f64 / 1024.0 / 96.0).clamp(0.5, 4.0)
+    } else {
+        1.0
+    }
+}
+
 struct Screen {
     x: f64,
     y: f64,
@@ -93,6 +108,7 @@ struct Boot {
     platform: &'static str,
     screen_width: f64,
     screen_height: f64,
+    zoom: f64,
     proxy: Option<proxy::ProxyState>,
     logs_dir: String,
     /// `FLOE_OPEN=live|hosts|ask|settings`: open on that tab at start (testing, screenshots).
@@ -120,6 +136,7 @@ fn boot(app: AppHandle, win: WebviewWindow) -> Boot {
         },
         screen_width: s.w,
         screen_height: s.h,
+        zoom: TEXT_ZOOM.get().copied().unwrap_or(1.0),
         proxy: app.state::<Arc<proxy::Supervisor>>().snapshot(),
         logs_dir: paths::logs_dir().display().to_string(),
         open: std::env::var("FLOE_OPEN").ok().filter(|v| !v.is_empty()),
@@ -365,6 +382,12 @@ pub fn run() {
         .setup(move |app| {
             log::line(&format!("Floe {} starting", app.package_info().version));
             *app.state::<Geometry>().anchor.lock().unwrap() = config::load_anchor();
+            #[cfg(target_os = "linux")]
+            {
+                let z = read_text_zoom();
+                let _ = TEXT_ZOOM.set(z);
+                log::line(&format!("text scale {z:.2}"));
+            }
 
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
