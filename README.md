@@ -178,6 +178,14 @@ you can pick more than one. You get a short banner each time it answers. The pro
 answering, so it works while Floe is collapsed. It keeps the setting in
 `~/.config/floe/prefs.json`.
 
+**Updates.** Floe keeps itself up to date. Twice a day the proxy asks GitHub for the latest release.
+When a newer one is out, Settings shows it with an **Update now** button.
+- With **Update Floe automatically** on (the default), Floe installs it by itself, but only while no
+  agent is waiting on you.
+- Updating runs the same installer you installed with. Floe closes and opens again on the new version
+  a few seconds later, and the installer's output goes to `update.log` next to the other logs.
+- A Floe run from a git checkout never updates itself. Update it with `git pull`.
+
 `~/.config/floe/config.json` (restart Floe after editing):
 
 ```json
@@ -200,8 +208,7 @@ answering, so it works while Floe is collapsed. It keeps the setting in
 - `hiddenHosts`: Orca servers to skip, by id or name.
 - `orcaBin`, `claudeBin`: only needed if Floe can't find the `orca` or `claude` CLI on its own.
 - `checkUpdates` (default `true`): twice a day the proxy asks GitHub whether a newer Floe is out.
-  If one is, Settings says so and shows the install command that updates it. Set it to `false`
-  to turn the check off.
+  Set it to `false` to turn off the check, and with it every update.
 
 On Linux and Windows, `floe --toggle` opens or closes the running Floe, the same as the hotkey.
 

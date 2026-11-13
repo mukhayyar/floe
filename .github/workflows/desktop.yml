@@ -7,7 +7,7 @@ on:
   push:
     tags: ["v*"]
   pull_request:
-    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+    paths: ["desktop/**", "proxy/**", "install.sh", "install.ps1", ".github/workflows/desktop.yml"]
   workflow_dispatch:
 
 permissions:
@@ -100,6 +100,59 @@ jobs:
           if ($p.HasExited) { throw "Floe exited with $($p.ExitCode)" }
           Write-Host "running"
           Stop-Process -Id $p.Id -Force
+
+      # Auto-update, the whole way: lay out an installed Floe from this build, make it look old, ask
+      # it to update. The installer (from main, as users get it) must survive stopping Floe and
+      # its proxy, put the newest release in place, and start Floe again.
+      - name: Auto-update end to end (Linux)
+        if: matrix.name == 'linux-x86_64'
+        run: |
+          P="$HOME/.local/share/floe"
+          mkdir -p "$P"
+          cp -R proxy sage brain "$P/"
+          cp out/Floe-linux-x86_64.AppImage "$P/Floe.AppImage" && chmod +x "$P/Floe.AppImage"
+          sed -i 's/"version": "[^"]*"/"version": "0.0.1"/' "$P/proxy/package.json"
+          Xvfb :99 -screen 0 1920x1080x24 >/dev/null 2>&1 &
+          export DISPLAY=:99 APPIMAGE_EXTRACT_AND_RUN=1
+          "$P/Floe.AppImage" > app.log 2>&1 &
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:7717/health >/dev/null 2>&1 && break; sleep 1; done
+          curl -fsS 'http://127.0.0.1:7717/version?check=1'; echo
+          curl -fsS -X POST http://127.0.0.1:7717/update; echo
+          ok=0
+          for i in $(seq 1 240); do
+            if ! grep -qs '"0.0.1"' "$P/proxy/package.json" && curl -fsS http://127.0.0.1:7717/health >/dev/null 2>&1; then ok=1; break; fi
+            sleep 1
+          done
+          echo "--- update.log"; cat "$HOME/.local/state/floe/update.log" || true
+          echo "--- proxy.log"; tail -20 "$HOME/.local/state/floe/proxy.log" || true
+          echo "--- processes"; ps -eo pid,args | grep -iE "[f]loe|[b]un " | cut -c1-160 || true
+          test $ok = 1
+
+      - name: Auto-update end to end (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $P = "$env:LOCALAPPDATA\Floe"
+          New-Item -ItemType Directory -Force $P | Out-Null
+          foreach ($d in "proxy", "sage", "brain") { Copy-Item -Recurse -Force $d "$P\$d" }
+          Copy-Item "out/Floe-windows-x64.exe" "$P\floe.exe"
+          (Get-Content "$P\proxy\package.json") -replace '"version": "[^"]*"', '"version": "0.0.1"' | Set-Content "$P\proxy\package.json"
+          Start-Process -FilePath "$P\floe.exe"
+          $up = $false
+          foreach ($i in 1..60) { try { Invoke-RestMethod http://127.0.0.1:7717/health | Out-Null; $up = $true; break } catch { Start-Sleep 1 } }
+          if (-not $up) { Get-Content "$P\logs\app.log", "$P\logs\proxy.log" -ErrorAction SilentlyContinue; throw "Floe's proxy didn't start" }
+          Invoke-RestMethod 'http://127.0.0.1:7717/version?check=1' | ConvertTo-Json -Compress
+          Invoke-RestMethod -Method Post http://127.0.0.1:7717/update | ConvertTo-Json -Compress
+          $done = $false
+          foreach ($i in 1..240) {
+            Start-Sleep 1
+            $old = (Test-Path "$P\proxy\package.json") -and (Select-String -Quiet -Pattern '"0.0.1"' -Path "$P\proxy\package.json")
+            if (-not $old) { try { Invoke-RestMethod http://127.0.0.1:7717/health | Out-Null; $done = $true; break } catch {} }
+          }
+          Write-Host "--- update.log"; Get-Content "$P\logs\update.log" -ErrorAction SilentlyContinue
+          Write-Host "--- proxy.log"; Get-Content "$P\logs\proxy.log" -Tail 20 -ErrorAction SilentlyContinue
+          Get-Process floe, bun -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, Path
+          if (-not $done) { throw "the update didn't finish" }
 
       - uses: actions/upload-artifact@v4
         with:

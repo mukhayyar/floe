@@ -80,6 +80,8 @@ test("answers with the option's digit and sees the agent go back to work", async
   const id = watcher.snapshot.agents[0].id;
   const said = await watcher.answer(id, { option: 2 });
   expect(said).toBe("picked “In memory”");
+  // the fake reports keystrokes on stdout, which can land after its reply on the socket
+  await until("the keystroke to reach Orca", () => sent.length > 0);
   expect(sent).toEqual([expect.objectContaining({ terminal: "term-1", text: "2", enter: false })]);
   await until("the agent to work again", () => watcher.snapshot.agents[0]?.state === "working");
   expect(watcher.snapshot.mood).toBe("working");

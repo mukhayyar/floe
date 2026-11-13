@@ -22,3 +22,13 @@ test("every part of Floe carries the same version (the update check relies on th
   const mac = (await read("app/Info.plist")).match(/CFBundleShortVersionString<\/key>\s*<string>([^<]+)</)?.[1];
   expect({ desktop, tauri, cargo, mac }).toEqual({ desktop: VERSION, tauri: VERSION, cargo: VERSION, mac: VERSION });
 });
+
+test("a git checkout never runs the installer on itself", async () => {
+  const { installNow, update, SOURCE_CHECKOUT } = await import("../src/update");
+  expect(SOURCE_CHECKOUT).toBe(true); // tests run from the repo
+  Object.assign(update, { newer: true, latest: "99.0.0" });
+  const r = installNow("you");
+  expect(r.ok).toBe(false);
+  expect(r.message).toContain("git pull");
+  expect(update.updating).toBe(false);
+});

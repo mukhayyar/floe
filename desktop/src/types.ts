@@ -201,4 +201,8 @@ export interface UpdateInfo {
   latest: string | null;
   newer: boolean;
   url: string | null;
+  /** An installed Floe (not a git checkout) can update itself. */
+  canUpdate?: boolean;
+  /** The installer is running; Floe restarts in a moment. */
+  updating?: boolean;
 }

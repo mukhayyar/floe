@@ -256,9 +256,7 @@ export function beginTerminal(t: TerminalInfo, where: string) {
 }
 
 export async function focusTerminal(t: TerminalInfo) {
-  const r = await post(`terminals/${enc(t.id)}/focus`, {}, proxyOnline.value);
-  if (!r.ok) say(r.message);
-  else collapse();
+  await showInOrca(`terminals/${enc(t.id)}/focus`);
 }
 
 export async function newTerminal(w: WorkspaceView) {
@@ -274,9 +272,7 @@ export function beginLaunch(w: WorkspaceView, projectName: string, h: HostView, 
 }
 
 export async function focusWorkspace(w: WorkspaceView) {
-  const r = await post(`workspaces/${enc(w.key)}/focus`, {}, proxyOnline.value);
-  if (!r.ok) say(r.message);
-  else collapse();
+  await showInOrca(`workspaces/${enc(w.key)}/focus`);
 }
 
 // MARK: presentation
@@ -335,7 +331,7 @@ export function expand(opts: { agent?: string | null; tab?: Tab; focus?: boolean
   if (opts.focus !== false) focusInput();
 }
 
-export function collapse() {
+export function collapse(opts: { handBack?: boolean } = {}) {
   clearInterval(screenTimer);
   screenTimer = undefined;
   if (presentation.value === "compact") return;
@@ -343,7 +339,7 @@ export function collapse() {
     presentation.value = "compact";
     peek.value = null;
   });
-  native.releaseFocus();
+  native.releaseFocus(opts.handBack ?? true);
 }
 
 export function toggle() {
@@ -386,8 +382,14 @@ export function refreshScreens() {
   }
 }
 
+/** agent id → the latest screen request, so an older read landing late can't bring back a menu you just answered. */
+const screenSeq = new Map<string, number>();
+
 export async function fetchScreen(id: string) {
+  const seq = (screenSeq.get(id) ?? 0) + 1;
+  screenSeq.set(id, seq);
   const v = await getJson<ScreenView & { ok?: boolean }>(`agents/${enc(id)}/screen`);
+  if (screenSeq.get(id) !== seq) return; // a newer read is on its way
   if (!v || !Array.isArray(v.lines)) return;
   const view: ScreenView = { lines: v.lines, options: v.options ?? [], multi: v.multi, tabs: v.tabs, steps: v.steps };
   if (JSON.stringify(screens.value[id]) !== JSON.stringify(view)) screens.value = { ...screens.value, [id]: view };
@@ -449,9 +451,7 @@ export async function step(a: Agent, dir: "next" | "back") {
 }
 
 export async function focusInOrca(a: Agent) {
-  const r = await post(`agents/${enc(a.id)}/focus`, {}, proxyOnline.value);
-  if (!r.ok) say(r.message);
-  else collapse();
+  await showInOrca(`agents/${enc(a.id)}/focus`);
 }
 
 // MARK: input
@@ -591,9 +591,18 @@ export function newChat() {
 }
 
 export async function openChatInOrca() {
-  const r = await post("chat/open", {}, proxyOnline.value);
-  if (r.ok) collapse();
-  else say(r.message);
+  await showInOrca("chat/open");
+}
+
+/**
+ * Ask Orca to come forward (a terminal, a workspace, an agent, the chat), then fold up without
+ * handing the keyboard back to whatever was in front before: it's Orca's now.
+ */
+async function showInOrca(path: string) {
+  await native.allowForeground(); // Windows: only the foreground app may let Orca come forward
+  const r = await post(path, {}, proxyOnline.value);
+  if (!r.ok) say(r.message);
+  else collapse({ handBack: false });
 }
 
 export async function setAutoDeliver(onOff: boolean) {
@@ -621,9 +630,30 @@ export async function loadUpdate(check = false) {
   if (j && typeof j.current === "string") update.value = j;
 }
 
+/** Install a newer Floe by itself once no agent is waiting on you (kept by the proxy). */
+export const autoUpdate = signal(true);
+export async function setAutoUpdate(onOff: boolean) {
+  autoUpdate.value = onOff;
+  const r = await post("prefs", { autoUpdate: onOff }, proxyOnline.value);
+  if (!r.ok) {
+    autoUpdate.value = !onOff;
+    say(r.message || "Couldn't change auto-update");
+  }
+}
+
+/** Install the latest Floe now: the installer stops Floe, updates it and starts it again. */
+export async function updateNow() {
+  const r = await post("update", {}, proxyOnline.value);
+  say(r.message || (r.ok ? "Updating Floe…" : "Couldn't update Floe"));
+  loadUpdate();
+}
+
 async function loadPrefs() {
-  const j = await getJson<{ autoDeliver?: boolean }>("prefs");
-  if (j) autoDeliver.value = j.autoDeliver === true;
+  const j = await getJson<{ autoDeliver?: boolean; autoUpdate?: boolean }>("prefs");
+  if (j) {
+    autoDeliver.value = j.autoDeliver === true;
+    autoUpdate.value = j.autoUpdate !== false;
+  }
 }
 
 async function loadChat() {
@@ -696,7 +726,7 @@ async function runEvents() {
   let backoff = 1;
   for (;;) {
     try {
-      for await (const ev of sse("events")) {
+      for await (const ev of sse("events", {}, 40_000)) {
         if (!proxyOnline.value) {
           proxyOnline.value = true;
           native.log("connected to the proxy");

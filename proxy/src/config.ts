@@ -77,7 +77,11 @@ export function loadConfig(): Config {
     const { allowedTools, ...rest } = DEFAULTS;
     writeFileSync(CONFIG_PATH, JSON.stringify({ model: rest.model, port: rest.port, extraDirs: [] }, null, 2) + "\n");
   }
-  return { ...DEFAULTS, ...readJson<Config>(CONFIG_PATH) };
+  const cfg = { ...DEFAULTS, ...readJson<Config>(CONFIG_PATH) };
+  // The app passes the port it watches (FLOE_PORT, or config.json's).
+  const port = Number(process.env.FLOE_PORT);
+  if (Number.isInteger(port) && port > 0 && port < 65536) cfg.port = port;
+  return cfg;
 }
 
 export interface ChatMessage {

@@ -14,10 +14,13 @@ import {
   proxyOnline,
   proxyState,
   setAutoDeliver,
+  autoUpdate,
   loadUpdate,
   setAutostart,
+  setAutoUpdate,
   sound,
   update,
+  updateNow,
 } from "../store";
 import { SmallButton, Toggle } from "./parts";
 
@@ -50,12 +53,18 @@ export function SettingsView() {
           <div class="label">
             Floe {u.latest} is out <span class="faint">(you have {u.current})</span>
           </div>
-          <div class="soft">To update, run the install command again{b?.platform === "windows" ? " in PowerShell" : " in a terminal"}:</div>
-          <code class="cmd">{INSTALL[b?.platform ?? "linux"]}</code>
-          {u.url && (
+          {u.updating ? (
+            <div class="soft">Updating… Floe closes and opens again in a moment.</div>
+          ) : u.canUpdate ? (
             <div class="row gap6 wrap">
-              <SmallButton title="What's new" icon="open" onClick={() => native.openUrl(u.url!)} />
+              <SmallButton title="Update now" icon="down" onClick={updateNow} />
+              {u.url && <SmallButton title="What's new" icon="open" onClick={() => native.openUrl(u.url!)} />}
             </div>
+          ) : (
+            <>
+              <div class="soft">This Floe runs from a source checkout. Update it with git pull, or install it with:</div>
+              <code class="cmd">{INSTALL[b?.platform ?? "linux"]}</code>
+            </>
           )}
         </div>
       )}
@@ -73,6 +82,10 @@ export function SettingsView() {
         <small>
           Delivers messages held from other sessions and picks the option an agent marks “Recommended”, without asking. Permission prompts still wait for you.
         </small>
+      </Toggle>
+      <Toggle on={autoUpdate.value} onChange={setAutoUpdate} disabled={!ok}>
+        <span>Update Floe automatically</span>
+        <small>Installs a new release by itself once no agent is waiting on you. Floe closes and opens again while it updates.</small>
       </Toggle>
       {native.inTauri && (
         <Toggle on={autostart.value === true} onChange={setAutostart} disabled={autostart.value === null}>

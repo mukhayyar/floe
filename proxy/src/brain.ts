@@ -6,7 +6,7 @@
 import { childEnv, loadState, saveState, type ChatMessage, type Config, type State } from "./config";
 import type { OrcaWatcher, Snapshot } from "./orca";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 import { IS_MAC, IS_WIN, dirs, openOrca, orcaCli } from "./platform";
 
 const MACHINE = IS_MAC ? "Mac" : "computer";
@@ -87,7 +87,7 @@ export class Brain {
     try {
       const res = await this.orca.rpc.call<any>("local", "repo.list", {});
       const repos: any[] = res.repos ?? [];
-      this.repoDirs = repos.map((r) => r.path).filter((p: string) => p && p.startsWith("/"));
+      this.repoDirs = repos.map((r) => r.path).filter((p: string) => p && isAbsolute(p)); // C:\… on Windows
       const repoLines = repos.map((r) => `- ${r.displayName} | ${r.id} | ${r.path}`).join("\n");
       this.system = SYSTEM(repoLines || "(none)", hostLines || "(unknown)");
     } catch {
