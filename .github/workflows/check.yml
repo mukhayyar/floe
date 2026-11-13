@@ -1,0 +1,66 @@
+# The proxy and the installers on all three systems: tests, then a real boot of the proxy.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  proxy:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Tests
+        working-directory: proxy
+        run: bun test
+
+      - name: Boot the proxy (POSIX)
+        if: runner.os != 'Windows'
+        working-directory: proxy
+        run: |
+          bun src/server.ts > proxy.log 2>&1 &
+          for i in $(seq 1 40); do curl -fsS http://127.0.0.1:7717/health && break; sleep 0.5; done
+          echo
+          curl -fsS http://127.0.0.1:7717/status | head -c 400; echo
+          # another site's page must not reach it; Floe's own webview must
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Origin: https://example.com' http://127.0.0.1:7717/status)" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: rebind.example:7717' http://127.0.0.1:7717/status)" = 403
+          curl -fsS -D - -o /dev/null -H 'Origin: tauri://localhost' http://127.0.0.1:7717/health | grep -i 'access-control-allow-origin: tauri://localhost'
+          cat proxy.log
+
+      - name: Boot the proxy (Windows)
+        if: runner.os == 'Windows'
+        working-directory: proxy
+        shell: pwsh
+        run: |
+          $p = Start-Process -PassThru -NoNewWindow -FilePath bun -ArgumentList "src/server.ts" -RedirectStandardOutput proxy.log -RedirectStandardError proxy.err
+          $ok = $false
+          foreach ($i in 1..40) { try { Invoke-RestMethod http://127.0.0.1:7717/health | ConvertTo-Json -Compress; $ok = $true; break } catch { Start-Sleep -Milliseconds 500 } }
+          if (-not $ok) { Get-Content proxy.log, proxy.err; throw "proxy didn't start" }
+          (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7717/status).Content.Substring(0, 200)
+          $code = try { (Invoke-WebRequest -UseBasicParsing -Headers @{ Origin = "https://example.com" } http://127.0.0.1:7717/status).StatusCode } catch { $_.Exception.Response.StatusCode.value__ }
+          if ($code -ne 403) { throw "a foreign origin got $code" }
+          $r = Invoke-WebRequest -UseBasicParsing -Headers @{ Origin = "http://tauri.localhost" } http://127.0.0.1:7717/health
+          if ($r.Headers["Access-Control-Allow-Origin"] -ne "http://tauri.localhost") { throw "no CORS for the Floe webview" }
+          Get-Content proxy.log
+          Stop-Process -Id $p.Id -Force
+
+      - name: Installer syntax (bash)
+        if: runner.os != 'Windows'
+        run: bash -n install.sh && bash -n scripts/build.sh
+
+      - name: Installer syntax (PowerShell)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD\install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { $_.ToString() }; throw "install.ps1 doesn't parse" }
+          powershell -NoProfile -Command "`$e=`$null; [System.Management.Automation.Language.Parser]::ParseFile('$PWD\install.ps1',[ref]`$null,[ref]`$e) | Out-Null; if (`$e) { exit 1 }"

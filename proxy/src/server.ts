@@ -45,6 +45,26 @@ const json = (data: unknown, status = 200) => Response.json(data, { status });
 const fail = (e: unknown, status = 400) => json({ ok: false, error: (e as Error).message ?? String(e) }, status);
 const SSE_HEADERS = { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" };
 
+// Only Floe may drive this proxy. The Mac app sends no Origin; the Linux/Windows app is a Tauri
+// webview. A web page in a browser always sends its Origin on cross-site requests, so anything
+// else is refused: otherwise any site could type into your terminals through localhost.
+const ORIGINS = new Set(["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost", "http://localhost:1420"]);
+const HOSTS = new Set([`127.0.0.1:${cfg.port}`, `localhost:${cfg.port}`, `[::1]:${cfg.port}`]);
+function cors(origin: string | null): Record<string, string> {
+  return origin && ORIGINS.has(origin)
+    ? { "access-control-allow-origin": origin, "access-control-allow-methods": "GET, POST, OPTIONS", "access-control-allow-headers": "content-type", "access-control-expose-headers": "x-sage-layout", vary: "origin" }
+    : {};
+}
+function guard(req: Request): Response | null {
+  const origin = req.headers.get("origin");
+  if (origin && !ORIGINS.has(origin)) return json({ ok: false, error: "origin not allowed" }, 403);
+  // DNS rebinding: a hostile name that resolves to 127.0.0.1 still carries its own Host header
+  const host = req.headers.get("host");
+  if (host && !HOSTS.has(host)) return json({ ok: false, error: "host not allowed" }, 403);
+  if (req.method === "OPTIONS") return new Response(null, { status: 204 });
+  return null;
+}
+
 function events(req: Request): Response {
   let cleanup = () => {};
   const stream = new ReadableStream<Uint8Array>({
@@ -120,108 +140,114 @@ const server = Bun.serve({
   port: cfg.port,
   idleTimeout: 0, // SSE streams stay open
   async fetch(req) {
-    const url = new URL(req.url);
-    const p = url.pathname;
-    const m = req.method;
-    try {
-      if (m === "GET" && p === "/health") return json({ ok: true, orca: orca.snapshot.online, busy: brain.busy });
-      if (m === "GET" && p === "/status") return json(orca.snapshot);
-      if (m === "GET" && p === "/events") return events(req);
-      if (m === "GET" && p === "/prefs") return json({ ok: true, ...prefs });
-      if (m === "POST" && p === "/prefs") {
-        const next = setPrefs(await body(req));
-        console.log(`[prefs] autoDeliver ${next.autoDeliver ? "on" : "off"}`);
-        setTimeout(() => orca.poll(), 50); // act on prompts that are already waiting
-        return json({ ok: true, ...next });
-      }
-      if (m === "GET" && p === "/chat") return json({ sessionId: brain.state.sessionId, busy: brain.busy, messages: brain.state.messages });
-
-      if (m === "GET" && (p === "/scene.png" || p === "/scene.json")) {
-        const scene = await sages.scene();
-        if (!scene) return new Response(null, { status: 202, headers: { "retry-after": "5", "cache-control": "no-store" } });
-        return new Response(Bun.file(p.endsWith("png") ? scene.png : scene.json), {
-          headers: { "content-type": p.endsWith("png") ? "image/png" : "application/json", "cache-control": "no-store" },
-        });
-      }
-
-      const sage = p.match(/^\/sage\/([^/]+)\.png$/);
-      if (m === "GET" && sage) {
-        const file = await sages.sheet(decodeURIComponent(sage[1]));
-        const headers = { "x-sage-layout": await sages.layout(), "cache-control": "no-store" };
-        if (!file) return new Response(null, { status: 202, headers: { ...headers, "retry-after": "8" } });
-        return new Response(Bun.file(file), { headers: { ...headers, "content-type": "image/png" } });
-      }
-
-      const agent = p.match(/^\/agents\/([^/]+)\/(screen|answer|focus)$/);
-      if (agent) {
-        const id = decodeURIComponent(agent[1]);
-        if (m === "GET" && agent[2] === "screen") return json({ ok: true, ...(await orca.screen(id)) });
-        if (m === "POST" && agent[2] === "answer") {
-          const b = await body(req);
-          const result = await orca.answer(id, b);
-          console.log(`[answer] ${id.split("|")[0]} ${b.step ? "step " + b.step : b.option !== undefined ? "option " + b.option : "text"}: ${result}`);
-          setTimeout(() => orca.poll(), 400); // reflect the change quickly
-          return json({ ok: true, result });
-        }
-        if (m === "POST" && agent[2] === "focus") {
-          await orca.focus(id);
-          return json({ ok: true });
-        }
-      }
-
-      const term = p.match(/^\/terminals\/([^/]+)\/(screen|send|focus)$/);
-      if (term) {
-        const id = decodeURIComponent(term[1]);
-        if (m === "GET" && term[2] === "screen") return json({ ok: true, lines: await orca.terminalScreen(id) });
-        if (m === "POST" && term[2] === "send") {
-          const { text, enter } = await body(req);
-          await orca.terminalSend(id, String(text ?? ""), enter !== false);
-          return json({ ok: true, result: "sent" });
-        }
-        if (m === "POST" && term[2] === "focus") {
-          await orca.terminalFocus(id);
-          return json({ ok: true });
-        }
-      }
-      const wsGet = p.match(/^\/workspaces\/([^/]+)\/terminals$/);
-      if (wsGet && m === "GET") return json({ ok: true, terminals: await orca.terminals(decodeURIComponent(wsGet[1])) });
-      const wsNew = p.match(/^\/workspaces\/([^/]+)\/terminal$/);
-      if (wsNew && m === "POST") {
-        const { command } = await body(req);
-        return json({ ok: true, result: await orca.newTerminal(decodeURIComponent(wsNew[1]), command) });
-      }
-
-      const ws = p.match(/^\/workspaces\/([^/]+)\/(launch|focus)$/);
-      if (ws && m === "POST") {
-        const key = decodeURIComponent(ws[1]);
-        if (ws[2] === "launch") {
-          const { agent, prompt } = await body(req);
-          return json({ ok: true, result: await orca.launch(key, agent || "claude", prompt) });
-        }
-        await orca.focusWorkspace(key);
-        return json({ ok: true });
-      }
-
-      if (m === "POST" && p === "/ask") {
-        const { text } = await body(req);
-        if (!text || typeof text !== "string") return fail(new Error("text required"));
-        return ask(req, text);
-      }
-      if (m === "POST" && p === "/ask/stop") {
-        brain.stop();
-        return json({ ok: true });
-      }
-      if (m === "POST" && p === "/chat/new") {
-        brain.reset();
-        return json({ ok: true });
-      }
-      if (m === "POST" && p === "/chat/open") return json({ ok: true, handle: await brain.openInOrca() });
-      return json({ ok: false, error: "not found" }, 404);
-    } catch (e) {
-      return fail(e, 500);
-    }
+    const res = guard(req) ?? (await route(req));
+    for (const [k, v] of Object.entries(cors(req.headers.get("origin")))) res.headers.set(k, v);
+    return res;
   },
 });
+
+async function route(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const p = url.pathname;
+  const m = req.method;
+  try {
+    if (m === "GET" && p === "/health") return json({ ok: true, orca: orca.snapshot.online, busy: brain.busy });
+    if (m === "GET" && p === "/status") return json(orca.snapshot);
+    if (m === "GET" && p === "/events") return events(req);
+    if (m === "GET" && p === "/prefs") return json({ ok: true, ...prefs });
+    if (m === "POST" && p === "/prefs") {
+      const next = setPrefs(await body(req));
+      console.log(`[prefs] autoDeliver ${next.autoDeliver ? "on" : "off"}`);
+      setTimeout(() => orca.poll(), 50); // act on prompts that are already waiting
+      return json({ ok: true, ...next });
+    }
+    if (m === "GET" && p === "/chat") return json({ sessionId: brain.state.sessionId, busy: brain.busy, messages: brain.state.messages });
+
+    if (m === "GET" && (p === "/scene.png" || p === "/scene.json")) {
+      const scene = await sages.scene();
+      if (!scene) return new Response(null, { status: 202, headers: { "retry-after": "5", "cache-control": "no-store" } });
+      return new Response(Bun.file(p.endsWith("png") ? scene.png : scene.json), {
+        headers: { "content-type": p.endsWith("png") ? "image/png" : "application/json", "cache-control": "no-store" },
+      });
+    }
+
+    const sage = p.match(/^\/sage\/([^/]+)\.png$/);
+    if (m === "GET" && sage) {
+      const file = await sages.sheet(decodeURIComponent(sage[1]));
+      const headers = { "x-sage-layout": await sages.layout(), "cache-control": "no-store" };
+      if (!file) return new Response(null, { status: 202, headers: { ...headers, "retry-after": "8" } });
+      return new Response(Bun.file(file), { headers: { ...headers, "content-type": "image/png" } });
+    }
+
+    const agent = p.match(/^\/agents\/([^/]+)\/(screen|answer|focus)$/);
+    if (agent) {
+      const id = decodeURIComponent(agent[1]);
+      if (m === "GET" && agent[2] === "screen") return json({ ok: true, ...(await orca.screen(id)) });
+      if (m === "POST" && agent[2] === "answer") {
+        const b = await body(req);
+        const result = await orca.answer(id, b);
+        console.log(`[answer] ${id.split("|")[0]} ${b.step ? "step " + b.step : b.option !== undefined ? "option " + b.option : "text"}: ${result}`);
+        setTimeout(() => orca.poll(), 400); // reflect the change quickly
+        return json({ ok: true, result });
+      }
+      if (m === "POST" && agent[2] === "focus") {
+        await orca.focus(id);
+        return json({ ok: true });
+      }
+    }
+
+    const term = p.match(/^\/terminals\/([^/]+)\/(screen|send|focus)$/);
+    if (term) {
+      const id = decodeURIComponent(term[1]);
+      if (m === "GET" && term[2] === "screen") return json({ ok: true, lines: await orca.terminalScreen(id) });
+      if (m === "POST" && term[2] === "send") {
+        const { text, enter } = await body(req);
+        await orca.terminalSend(id, String(text ?? ""), enter !== false);
+        return json({ ok: true, result: "sent" });
+      }
+      if (m === "POST" && term[2] === "focus") {
+        await orca.terminalFocus(id);
+        return json({ ok: true });
+      }
+    }
+    const wsGet = p.match(/^\/workspaces\/([^/]+)\/terminals$/);
+    if (wsGet && m === "GET") return json({ ok: true, terminals: await orca.terminals(decodeURIComponent(wsGet[1])) });
+    const wsNew = p.match(/^\/workspaces\/([^/]+)\/terminal$/);
+    if (wsNew && m === "POST") {
+      const { command } = await body(req);
+      return json({ ok: true, result: await orca.newTerminal(decodeURIComponent(wsNew[1]), command) });
+    }
+
+    const ws = p.match(/^\/workspaces\/([^/]+)\/(launch|focus)$/);
+    if (ws && m === "POST") {
+      const key = decodeURIComponent(ws[1]);
+      if (ws[2] === "launch") {
+        const { agent, prompt } = await body(req);
+        return json({ ok: true, result: await orca.launch(key, agent || "claude", prompt) });
+      }
+      await orca.focusWorkspace(key);
+      return json({ ok: true });
+    }
+
+    if (m === "POST" && p === "/ask") {
+      const { text } = await body(req);
+      if (!text || typeof text !== "string") return fail(new Error("text required"));
+      return ask(req, text);
+    }
+    if (m === "POST" && p === "/ask/stop") {
+      brain.stop();
+      return json({ ok: true });
+    }
+    if (m === "POST" && p === "/chat/new") {
+      brain.reset();
+      return json({ ok: true });
+    }
+    if (m === "POST" && p === "/chat/open") return json({ ok: true, handle: await brain.openInOrca() });
+    return json({ ok: false, error: "not found" }, 404);
+  } catch (e) {
+    return fail(e, 500);
+  }
+}
 
 console.log(`floe proxy on http://${server.hostname}:${server.port} (model ${cfg.model})`);
 for (const sig of ["SIGINT", "SIGTERM"] as const)

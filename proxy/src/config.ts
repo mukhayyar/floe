@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { HOME, ORCA_USER_DATA, claudeBin } from "./platform";
 
-export const HOME = homedir();
+export { HOME, childEnv } from "./platform";
 export const ROOT = resolve(import.meta.dir, "..", "..");
 export const CONFIG_DIR = join(HOME, ".config", "floe");
 const CONFIG_PATH = join(CONFIG_DIR, "config.json");
@@ -13,7 +13,9 @@ export interface Config {
   port: number;
   /** Orca user-data dir; holds orca-runtime.json (socket + token). */
   orcaUserData: string;
+  /** macOS only: the Orca.app bundle. */
   orcaApp: string;
+  /** The `orca` CLI; empty means find the running Orca's own (see platform.ts). */
   orcaBin: string;
   claudeBin: string;
   /** Model for the island brain. Short answers matter more than depth here. */
@@ -31,17 +33,13 @@ export interface Config {
   allowedTools: string[];
 }
 
-function firstExisting(paths: string[]): string | undefined {
-  return paths.find((p) => existsSync(p));
-}
-
 const DEFAULTS: Config = {
   host: "127.0.0.1",
   port: 7717,
-  orcaUserData: join(HOME, "Library", "Application Support", "orca"),
+  orcaUserData: ORCA_USER_DATA,
   orcaApp: "/Applications/Orca.app",
-  orcaBin: firstExisting(["/Applications/Orca.app/Contents/Resources/bin/orca", "/opt/homebrew/bin/orca", "/usr/local/bin/orca"]) ?? "orca",
-  claudeBin: firstExisting([join(HOME, ".local", "bin", "claude"), join(HOME, ".claude", "local", "claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]) ?? "claude",
+  orcaBin: "",
+  claudeBin: claudeBin(),
   model: "sonnet",
   pollMs: 1500,
   remotePollMs: 4000,
@@ -99,11 +97,4 @@ export function loadState(): State {
 export function saveState(state: State) {
   mkdirSync(CONFIG_DIR, { recursive: true });
   writeFileSync(STATE_PATH, JSON.stringify({ ...state, messages: state.messages.slice(-60) }, null, 2));
-}
-
-/** launchd starts us with a bare PATH; children (orca, claude, git) need the user's tools. */
-export function childEnv(): Record<string, string> {
-  const extra = ["/opt/homebrew/bin", "/opt/homebrew/sbin", join(HOME, ".local", "bin"), join(HOME, ".bun", "bin"), "/usr/local/bin"];
-  const path = [...extra, ...(process.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin").split(":")];
-  return { ...(process.env as Record<string, string>), PATH: [...new Set(path)].join(":"), HOME };
 }

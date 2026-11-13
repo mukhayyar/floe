@@ -5,6 +5,7 @@
 import { writeFileSync, mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import * as k from "./kit/iso-kit.mjs";
 import * as A from "./kit/audit.mjs";
@@ -17,14 +18,29 @@ const host = { id: arg("id", "local"), name: arg("name", "This Mac"), kind: arg(
 const T = traitsOf(host);
 const CELL_PT = Number(arg("cell", 96));
 // any Chromium browser renders the sheets headlessly
-const CHROME = process.env.FLOE_CHROME || [
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "/Applications/Chromium.app/Contents/MacOS/Chromium",
-  "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-  "/Applications/Arc.app/Contents/MacOS/Arc",
-  `${process.env.HOME}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`,
-].find((p) => existsSync(p));
+const PF = process.env.ProgramFiles || "C:\\Program Files", PF86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", LAD = process.env.LOCALAPPDATA || "";
+const CHROME = process.env.FLOE_CHROME || {
+  darwin: [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Arc.app/Contents/MacOS/Arc",
+    `${process.env.HOME}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`,
+  ],
+  linux: [
+    "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser",
+    "/snap/bin/chromium", "/usr/bin/brave-browser", "/usr/bin/microsoft-edge", "/usr/bin/microsoft-edge-stable",
+    "/opt/google/chrome/chrome",
+  ],
+  // Edge ships with Windows, so there is always one
+  win32: [
+    join(PF, "Google", "Chrome", "Application", "chrome.exe"), join(PF86, "Google", "Chrome", "Application", "chrome.exe"),
+    join(LAD, "Google", "Chrome", "Application", "chrome.exe"),
+    join(PF86, "Microsoft", "Edge", "Application", "msedge.exe"), join(PF, "Microsoft", "Edge", "Application", "msedge.exe"),
+    join(PF, "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+  ],
+}[process.platform]?.find((p) => existsSync(p));
 if (!CHROME && (process.argv.includes("--sheet") || process.argv.includes("--scene"))) {
   console.error("Floe needs Google Chrome (or Chromium, Brave, Edge) to draw the sages. Install one, or set FLOE_CHROME.");
   process.exit(2);
@@ -43,7 +59,7 @@ svg.iso-svg{width:${W}px!important;height:${H}px!important;max-width:none!import
   const dir = mkdtempSync(join(tmpdir(), "floe-scene-"));
   const page = join(dir, "scene.html");
   writeFileSync(page, html);
-  const r = spawnSync(CHROME, ["--headless", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=2", `--window-size=${W},${H}`, `--screenshot=${scenePath}`, `file://${page}`], { encoding: "utf8", timeout: 60000 });
+  const r = spawnSync(CHROME, ["--headless", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=2", `--window-size=${W},${H}`, `--screenshot=${scenePath}`, pathToFileURL(page).href], { encoding: "utf8", timeout: 60000 });
   if (arg("scene-html")) writeFileSync(arg("scene-html"), html);
   rmSync(dir, { recursive: true, force: true });
   if (r.status !== 0) { console.error(r.stderr); process.exit(1); }
@@ -83,7 +99,7 @@ body.iso{--anatomy-weight:1.15px;background:transparent}
   writeFileSync(page, html);
   const w = COLS * CELL_PT, h = STATES.length * 2 * CELL_PT;
   const r = spawnSync(CHROME, ["--headless", "--disable-gpu", "--hide-scrollbars", "--default-background-color=00000000",
-    "--force-device-scale-factor=2", `--window-size=${w},${h}`, `--screenshot=${sheetPath}`, `file://${page}`], { encoding: "utf8", timeout: 60000 });
+    "--force-device-scale-factor=2", `--window-size=${w},${h}`, `--screenshot=${sheetPath}`, pathToFileURL(page).href], { encoding: "utf8", timeout: 60000 });
   rmSync(dir, { recursive: true, force: true });
   if (r.status !== 0) { console.error(r.stderr); process.exit(1); }
   console.log(JSON.stringify({ sheet: sheetPath, combo: comboOf(T), cols: COLS, cell: CELL_PT * 2, states: STATES, views: ["front", "back"] }));

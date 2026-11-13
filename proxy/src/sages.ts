@@ -8,12 +8,21 @@
 
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { createHash } from "node:crypto";
+import { setPriority } from "node:os";
 import type { HostView } from "./orca";
+import { IS_WIN, dirs } from "./platform";
 
 const SAGE_DIR = join(import.meta.dir, "../../sage");
-const CACHE = join(homedir(), "Library/Caches/Floe/sages");
+const CACHE = join(dirs.cache, "sages");
+/** Renders run at low priority (`nice`; Windows has no nice, so lower the priority after spawning). */
+const NICE = IS_WIN ? [] : ["nice", "-n", "15"];
+function lowPriority(pid: number) {
+  if (!IS_WIN) return;
+  try {
+    setPriority(pid, 19); // idle class; Chrome, started later by build.mjs, inherits it
+  } catch {}
+}
 
 type Host = Pick<HostView, "id" | "name" | "kind">;
 type SageModule = {
@@ -101,7 +110,8 @@ export class Sages {
     if (Date.now() - (this.failed.get(key) ?? 0) < 10 * 60_000) return null;
     if (!this.pending.has(key)) {
       const job = this.queue.then(async () => {
-        const proc = Bun.spawn(["nice", "-n", "15", process.execPath, join(SAGE_DIR, "build.mjs"), "--scene", `${png}.tmp.png`, "--scene-json", `${json}.tmp`], { stdout: "pipe", stderr: "pipe" });
+        const proc = Bun.spawn([...NICE, process.execPath, join(SAGE_DIR, "build.mjs"), "--scene", `${png}.tmp.png`, "--scene-json", `${json}.tmp`], { stdout: "pipe", stderr: "pipe", windowsHide: true });
+        lowPriority(proc.pid);
         if ((await proc.exited) !== 0 || !existsSync(`${png}.tmp.png`)) throw new Error(`scene render failed: ${(await new Response(proc.stderr).text()).slice(-300)}`);
         renameSync(`${json}.tmp`, json);
         renameSync(`${png}.tmp.png`, png);
@@ -130,9 +140,10 @@ export class Sages {
     const tmp = `${path}.${process.pid}.tmp.png`;
     const started = Date.now();
     const proc = Bun.spawn(
-      ["nice", "-n", "15", process.execPath, join(SAGE_DIR, "build.mjs"), "--id", h.id, "--name", h.name, "--kind", h.kind, "--salt", String(salt), "--sheet", tmp],
-      { stdout: "pipe", stderr: "pipe" },
+      [...NICE, process.execPath, join(SAGE_DIR, "build.mjs"), "--id", h.id, "--name", h.name, "--kind", h.kind, "--salt", String(salt), "--sheet", tmp],
+      { stdout: "pipe", stderr: "pipe", windowsHide: true },
     );
+    lowPriority(proc.pid);
     const code = await proc.exited;
     if (code !== 0 || !existsSync(tmp)) {
       rmSync(tmp, { force: true });

@@ -1,23 +1,41 @@
 #!/usr/bin/env bash
-# Install Floe on this Mac:
+# Install Floe on macOS or Linux (on Windows, use install.ps1):
 #
 #   curl -fsSL https://raw.githubusercontent.com/mukhayyar/floe/main/install.sh | bash
 #
 # Options (after `bash -s --`):
 #   --uninstall      stop Floe and remove it (your settings in ~/.config/floe stay; add --purge to remove them too)
-#   --from-source    build Floe.app on this Mac instead of downloading it (needs Xcode Command Line Tools)
+#   --from-source    build the app here instead of downloading it (macOS: Xcode Command Line Tools;
+#                    Linux: Rust and Tauri's system libraries, see desktop/README.md)
 #   --version vX.Y.Z install that release instead of the latest
 #
 # What it does: checks for Orca, installs Bun if it's missing, downloads the latest release
-# (a prebuilt Floe.app plus the proxy and sage sources), puts the app in ~/Applications and
-# the rest in ~/Library/Application Support/Floe, and starts both at login with launchd.
+# (a prebuilt app plus the proxy and sage sources) and starts Floe at login.
+#   macOS: Floe.app in ~/Applications, the rest in ~/Library/Application Support/Floe, launchd.
+#   Linux: Floe.AppImage and the rest in ~/.local/share/floe; the app starts the proxy itself
+#          and adds itself to your desktop's autostart.
 set -euo pipefail
 
 REPO="mukhayyar/floe"
-PREFIX="${FLOE_PREFIX:-$HOME/Library/Application Support/Floe}"
-APPDIR="${FLOE_APPDIR:-$HOME/Applications}"
-AGENTS="${FLOE_AGENTS:-$HOME/Library/LaunchAgents}"
-LOGS="${FLOE_LOGS:-$HOME/Library/Logs/Floe}"
+OS="$(uname -s)"
+case "$OS" in
+  Darwin | Linux) ;;
+  MINGW* | MSYS* | CYGWIN*) printf 'On Windows, run this in PowerShell instead:\n  irm https://raw.githubusercontent.com/%s/main/install.ps1 | iex\n' "$REPO" >&2; exit 1 ;;
+  *) printf 'Floe runs on macOS, Linux and Windows; this is %s.\n' "$OS" >&2; exit 1 ;;
+esac
+if [[ "$OS" == "Darwin" ]]; then
+  PREFIX="${FLOE_PREFIX:-$HOME/Library/Application Support/Floe}"
+  APPDIR="${FLOE_APPDIR:-$HOME/Applications}"
+  AGENTS="${FLOE_AGENTS:-$HOME/Library/LaunchAgents}"
+  LOGS="${FLOE_LOGS:-$HOME/Library/Logs/Floe}"
+  CACHE="$HOME/Library/Caches/Floe"
+else
+  PREFIX="${FLOE_PREFIX:-${XDG_DATA_HOME:-$HOME/.local/share}/floe}"
+  APPDIR="${FLOE_APPDIR:-${XDG_DATA_HOME:-$HOME/.local/share}/applications}"
+  AGENTS="${FLOE_AGENTS:-${XDG_CONFIG_HOME:-$HOME/.config}/autostart}"
+  LOGS="${FLOE_LOGS:-${XDG_STATE_HOME:-$HOME/.local/state}/floe}"
+  CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/floe"
+fi
 LABEL_PROXY="com.mukhayyar.floe.proxy"
 LABEL_APP="com.mukhayyar.floe"
 UID_NUM="$(id -u)"
@@ -41,6 +59,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 stop_agents() {
+  # a sandboxed run (FLOE_PREFIX etc.) must never stop the Floe that's really installed
+  [[ "${FLOE_NO_LAUNCHD:-0}" == "1" ]] && return 0
+  if [[ "$OS" == "Linux" ]]; then
+    # the app, then the proxy it supervises (matched by their install paths)
+    pkill -f "$PREFIX/Floe.AppImage" 2>/dev/null || true
+    pkill -f "$PREFIX/app/" 2>/dev/null || true
+    pkill -f "$PREFIX/proxy/src/server.ts" 2>/dev/null || true
+    return 0
+  fi
   for label in "$LABEL_APP" "$LABEL_PROXY"; do
     launchctl bootout "gui/$UID_NUM/$label" 2>/dev/null || true
   done
@@ -50,21 +77,41 @@ stop_agents() {
 if [[ "$MODE" == "uninstall" ]]; then
   say "Stopping Floe"
   stop_agents
-  rm -f "$AGENTS/$LABEL_APP.plist" "$AGENTS/$LABEL_PROXY.plist"
-  rm -rf "$APPDIR/Floe.app" "$PREFIX" "$HOME/Library/Caches/Floe"
+  if [[ "$OS" == "Linux" ]]; then
+    rm -f "$AGENTS/Floe.desktop" "$APPDIR/floe.desktop"
+    rm -rf "$PREFIX" "$CACHE"
+  else
+    rm -f "$AGENTS/$LABEL_APP.plist" "$AGENTS/$LABEL_PROXY.plist"
+    rm -rf "$APPDIR/Floe.app" "$PREFIX" "$CACHE"
+  fi
   [[ $PURGE == 1 ]] && rm -rf "$HOME/.config/floe" "$LOGS"
   bold "Floe is uninstalled."
   exit 0
 fi
 
 # ---------------------------------------------------------------- checks
-[[ "$(uname -s)" == "Darwin" ]] || die "Floe runs on macOS."
+if [[ "$OS" == "Linux" ]]; then
+  case "$(uname -m)" in
+    x86_64 | amd64) ARCH="x86_64" ;;
+    aarch64 | arm64) ARCH="aarch64" ;;
+    *) die "Floe's Linux build is for x86_64 and aarch64; this is $(uname -m)." ;;
+  esac
+  ORCA_SEEN=0
+  [[ -d "${XDG_CONFIG_HOME:-$HOME/.config}/orca" ]] && ORCA_SEEN=1
+  command -v orca-ide >/dev/null 2>&1 && ORCA_SEEN=1
+  if [[ $ORCA_SEEN == 0 ]]; then
+    warn "Orca doesn't seem to be installed. Floe talks to Orca; get it at https://orca.stably.ai"
+    warn "Floe still installs, and shows \"Orca is offline\" until Orca is running."
+  fi
+fi
+if [[ "$OS" == "Darwin" ]]; then
 MAJOR="$(sw_vers -productVersion | cut -d. -f1)"
 [[ "$MAJOR" -ge 14 ]] || die "Floe needs macOS 14 (Sonoma) or newer; this Mac has $(sw_vers -productVersion)."
 
 if [[ ! -d "/Applications/Orca.app" ]]; then
   warn "Orca isn't in /Applications. Floe talks to Orca; get it at https://orca.stably.ai"
   warn "Floe still installs, and shows \"Orca is offline\" until Orca is running."
+fi
 fi
 
 BUN="$(command -v bun || true)"
@@ -76,9 +123,15 @@ if [[ -z "$BUN" ]]; then
 fi
 
 CHROME=""
-for c in "/Applications/Google Chrome.app" "/Applications/Chromium.app" "/Applications/Brave Browser.app" "/Applications/Microsoft Edge.app" "/Applications/Arc.app" "$HOME/Applications/Google Chrome.app"; do
-  [[ -d "$c" ]] && { CHROME="$c"; break; }
-done
+if [[ "$OS" == "Darwin" ]]; then
+  for c in "/Applications/Google Chrome.app" "/Applications/Chromium.app" "/Applications/Brave Browser.app" "/Applications/Microsoft Edge.app" "/Applications/Arc.app" "$HOME/Applications/Google Chrome.app"; do
+    [[ -d "$c" ]] && { CHROME="$c"; break; }
+  done
+else
+  for c in google-chrome google-chrome-stable chromium chromium-browser brave-browser microsoft-edge microsoft-edge-stable; do
+    command -v "$c" >/dev/null 2>&1 && { CHROME="$c"; break; }
+  done
+fi
 [[ -z "$CHROME" ]] && warn "No Chrome, Chromium, Brave or Edge found. Floe works without one, but needs one to draw the sages in the Hosts tab."
 
 CLAUDE="$(command -v claude || true)"
@@ -120,6 +173,89 @@ fi
 SRC="$(find "$TMP" -maxdepth 1 -type d -name 'floe-*' | head -1)"
 [[ -d "$SRC/proxy" ]] || die "The download doesn't look like Floe."
 
+if [[ "$OS" == "Linux" ]]; then
+  # ---------------------------------------------------------------- Linux app
+  if [[ $FROM_SOURCE == 0 ]]; then
+    fetch "https://github.com/$REPO/releases/download/$VERSION/Floe-linux-$ARCH.AppImage" "$TMP/Floe.AppImage" ||
+      { warn "No prebuilt Linux app in $VERSION; building it here instead"; FROM_SOURCE=1; }
+  fi
+  if [[ $FROM_SOURCE == 1 ]]; then
+    command -v cargo >/dev/null 2>&1 || die "Building Floe needs Rust (https://rustup.rs) and Tauri's libraries (see desktop/README.md)."
+    say "Building Floe (a few minutes)"
+    (cd "$SRC/desktop" && "$BUN" install >/dev/null && "$BUN" x tauri build --no-bundle >/dev/null) || die "The build failed. See desktop/README.md for the libraries it needs."
+    BUILT="$(find "$SRC/desktop" -path '*/target/release/floe' -type f | head -1)"
+    [[ -x "$BUILT" ]] || die "The build didn't produce Floe."
+  fi
+
+  say "Installing to $PREFIX"
+  stop_agents
+  mkdir -p "$PREFIX" "$APPDIR" "$LOGS"
+  for part in proxy sage brain; do
+    rm -rf "${PREFIX:?}/$part"
+    cp -R "$SRC/$part" "$PREFIX/$part"
+  done
+  cp "$SRC/README.md" "$PREFIX/README.md" 2>/dev/null || true
+  rm -rf "$PREFIX/app" "$PREFIX/Floe.AppImage" "$PREFIX/floe"
+  if [[ $FROM_SOURCE == 1 ]]; then
+    cp "$BUILT" "$PREFIX/floe"
+    EXEC="$PREFIX/floe"
+  else
+    cp "$TMP/Floe.AppImage" "$PREFIX/Floe.AppImage"
+    chmod +x "$PREFIX/Floe.AppImage"
+    EXEC="$PREFIX/Floe.AppImage"
+    # AppImages mount themselves with FUSE 2; without it, unpack once and run the unpacked copy
+    if ! { ldconfig -p 2>/dev/null | grep -q 'libfuse\.so\.2'; }; then
+      say "FUSE 2 isn't installed, so unpacking the AppImage"
+      (cd "$PREFIX" && ./Floe.AppImage --appimage-extract >/dev/null) || die "Couldn't unpack Floe.AppImage."
+      mv "$PREFIX/squashfs-root" "$PREFIX/app"
+      rm -f "$PREFIX/Floe.AppImage"
+      EXEC="$PREFIX/app/AppRun"
+    fi
+    (cd "$TMP" && "$PREFIX/Floe.AppImage" --appimage-extract '*.png' >/dev/null 2>&1) || true
+  fi
+  ICON="$(find "$TMP/squashfs-root" "$PREFIX/app" -maxdepth 1 -name '*.png' 2>/dev/null | head -1 || true)"
+  [[ -n "$ICON" ]] && cp "$ICON" "$PREFIX/floe.png"
+  cat > "$APPDIR/floe.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Floe
+Comment=Your Orca agents at the top of the screen
+Exec="$EXEC"
+Icon=$PREFIX/floe.png
+Terminal=false
+Categories=Development;
+StartupNotify=false
+DESKTOP
+  command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPDIR" >/dev/null 2>&1 || true
+
+  if [[ "${FLOE_NO_LAUNCHD:-0}" == "1" ]]; then
+    bold "Installed (not started)."
+    exit 0
+  fi
+  if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    echo
+    bold "Floe is installed."
+    echo "  There's no desktop session here, so open Floe from your apps menu when you're at the desktop."
+    echo "  It starts its proxy itself, and at login from then on."
+    exit 0
+  fi
+  (setsid "$EXEC" >/dev/null 2>&1 &) || true
+  for _ in $(seq 1 30); do
+    curl -fsS "http://127.0.0.1:7717/health" >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+  echo
+  if curl -fsS "http://127.0.0.1:7717/health" >/dev/null 2>&1; then
+    bold "Floe is running at the top of your screen."
+  else
+    warn "Floe started, but its proxy didn't answer yet. Check $LOGS/proxy.log"
+  fi
+  echo "  Alt+Space opens it · drag the pill to move it · Floe's tray icon has Settings and Quit"
+  echo "  Logs: $LOGS · Settings: ~/.config/floe/config.json"
+  echo "  Uninstall: curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | bash -s -- --uninstall"
+  exit 0
+fi
+
 if [[ $FROM_SOURCE == 0 ]]; then
   # curl doesn't set the quarantine flag, so the ad-hoc signed app opens without a Gatekeeper prompt
   if fetch "https://github.com/$REPO/releases/download/$VERSION/Floe-macOS.zip" "$TMP/Floe.zip"; then
@@ -142,7 +278,7 @@ fi
 
 # ---------------------------------------------------------------- install
 say "Installing to $APPDIR/Floe.app and $PREFIX"
-[[ "${FLOE_NO_LAUNCHD:-0}" == "1" ]] || stop_agents
+stop_agents
 mkdir -p "$PREFIX" "$APPDIR" "$AGENTS" "$LOGS"
 for part in proxy sage brain; do
   rm -rf "$PREFIX/$part"
