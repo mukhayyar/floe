@@ -64,3 +64,42 @@ jobs:
           [System.Management.Automation.Language.Parser]::ParseFile("$PWD\install.ps1", [ref]$null, [ref]$errors) | Out-Null
           if ($errors) { $errors | ForEach-Object { $_.ToString() }; throw "install.ps1 doesn't parse" }
           powershell -NoProfile -Command "`$e=`$null; [System.Management.Automation.Language.Parser]::ParseFile('$PWD\install.ps1',[ref]`$null,[ref]`$e) | Out-Null; if (`$e) { exit 1 }"
+
+  # The published release, installed the way people install it, on fresh machines: the installer
+  # sets up Bun and the app, then the app has to start its own proxy.
+  install-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install (no desktop session, so it doesn't start)
+        run: bash install.sh
+      - name: Start Floe under a virtual display; it starts the proxy
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb >/dev/null
+          P="$HOME/.local/share/floe"
+          ls "$P"; cat "$HOME/.local/share/applications/floe.desktop"
+          EXEC=$(grep '^Exec=' "$HOME/.local/share/applications/floe.desktop" | cut -d= -f2- | tr -d '"')
+          xvfb-run -a "$EXEC" > app.log 2>&1 &
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:7717/health && break; sleep 1; done
+          echo
+          curl -fsS http://127.0.0.1:7717/health
+          echo; tail -20 "$HOME/.local/state/floe/app.log" 2>/dev/null || tail -20 app.log
+      - name: Uninstall
+        run: bash install.sh --uninstall && test ! -e "$HOME/.local/share/floe"
+
+  install-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install and start; the app starts the proxy
+        shell: powershell
+        run: |
+          .\install.ps1
+          Invoke-RestMethod http://127.0.0.1:7717/health | ConvertTo-Json -Compress
+          Get-ChildItem "$env:LOCALAPPDATA\Floe"
+          Get-Content "$env:LOCALAPPDATA\Floe\logs\app.log" -Tail 20 -ErrorAction SilentlyContinue
+      - name: Uninstall
+        shell: powershell
+        run: |
+          .\install.ps1 -Uninstall
+          if (Test-Path "$env:LOCALAPPDATA\Floe") { throw "still installed" }
