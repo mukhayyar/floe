@@ -80,10 +80,14 @@ jobs:
           ls "$P"; cat "$HOME/.local/share/applications/floe.desktop"
           EXEC=$(grep '^Exec=' "$HOME/.local/share/applications/floe.desktop" | cut -d= -f2- | tr -d '"')
           xvfb-run -a "$EXEC" > app.log 2>&1 &
-          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:7717/health && break; sleep 1; done
+          ok=0
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:7717/health && { ok=1; break; }; sleep 1; done
           echo
-          curl -fsS http://127.0.0.1:7717/health
-          echo; tail -20 "$HOME/.local/state/floe/app.log" 2>/dev/null || tail -20 app.log
+          echo "--- app stdout"; tail -30 app.log || true
+          echo "--- app.log"; tail -30 "$HOME/.local/state/floe/app.log" 2>/dev/null || true
+          echo "--- proxy.log"; tail -30 "$HOME/.local/state/floe/proxy.log" 2>/dev/null || true
+          echo "--- processes"; ps -eo pid,args | grep -iE "[f]loe|[b]un " | cut -c1-160 || true
+          test $ok = 1
       - name: Uninstall
         run: bash install.sh --uninstall && test ! -e "$HOME/.local/share/floe"
 
