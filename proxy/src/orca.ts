@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config";
-import { parseScreen, type ScreenView } from "./menu";
+import { autoChoice, parseScreen, type ScreenView } from "./menu";
+import { prefs } from "./prefs";
 import { LOCAL, OrcaError, OrcaRpc } from "./orca-rpc";
 
 export type Mood = "offline" | "idle" | "working" | "attention" | "done";
@@ -81,7 +82,7 @@ export interface Snapshot {
 }
 
 export interface Activity {
-  kind: "attention" | "done" | "started";
+  kind: "attention" | "done" | "started" | "auto";
   agentId: string;
   workspace: string;
   title: string;
@@ -95,6 +96,25 @@ interface HostState {
   worktrees: any[];
   at: number;
 }
+
+/** Auto-deliver's view of one agent waiting on a prompt. */
+interface Auto {
+  /** Don't look before this (gives a fresh dialog time to accept keys, and backs off). */
+  next: number;
+  busy: boolean;
+  /** The "needs you" ping, held back until auto-deliver knows it won't answer. */
+  tell: (() => void) | null;
+  /** Floe answered something for this agent while it waited. */
+  picked: boolean;
+  /** The prompt last answered, and how many times in a row: a prompt that keeps coming back means the keys aren't landing. */
+  sig: string;
+  tries: number;
+  /** Back-off between looks at a prompt Floe leaves to you. */
+  wait: number;
+}
+
+/** A dialog may refuse keys that arrive right after it opens (Claude's held-message dialog does). */
+const AUTO_DELAY_MS = 1500;
 
 interface Trail {
   key: string;
@@ -122,6 +142,7 @@ function inputText(input: unknown): string | null {
 
 /** Orca's generic name for any prompt it reads off a screen. */
 const GENERIC = /^permission prompt$/i;
+const whereOf = (a: IslandAgent) => (a.hostId === LOCAL ? a.workspace : `${a.hostName} · ${a.workspace}`);
 const RANK: Record<string, number> = { waiting: 0, working: 1, done: 2, idle: 3 };
 
 export class OrcaWatcher {
@@ -142,6 +163,8 @@ export class OrcaWatcher {
   private handles = new Map<string, { runtime: string; handle: string }>();
   /** agent id → last screen we read, so answering doesn't re-read it. */
   private screens = new Map<string, { view: ScreenView & { handle: string }; at: number }>();
+  /** Agents waiting on a prompt while auto-deliver is on. */
+  private autos = new Map<string, Auto>();
 
   constructor(private cfg: Config) {
     this.rpc = new OrcaRpc(cfg);
@@ -403,6 +426,7 @@ export class OrcaWatcher {
     };
     this.diff(this.snapshot, next);
     this.snapshot = next;
+    this.autoScan(next);
     const { at, ...rest } = next;
     const key = JSON.stringify(rest);
     if (key !== this.lastKey) {
@@ -418,7 +442,7 @@ export class OrcaWatcher {
     const recentDone = done.filter((a) => now - a.since < RECENT_DONE_MS);
     const counts = { working: working.length, attention: att.length, done: done.length, idle: agents.length - att.length - working.length - done.length, total: agents.length };
     if (!online) return { mood: "offline", headline: "Orca is not reachable", counts };
-    const where = (a: IslandAgent) => (a.hostId === LOCAL ? a.workspace : `${a.hostName} · ${a.workspace}`);
+    const where = whereOf;
     if (att.length) {
       const a = att[0];
       return { mood: "attention", headline: `${where(a)}: ${a.detail ?? "needs you"}${att.length > 1 ? ` (+${att.length - 1})` : ""}`, counts };
@@ -440,13 +464,16 @@ export class OrcaWatcher {
       const runtime = a.id.split("|")[0];
       if (!known.has(runtime)) continue; // first contact with a host: don't replay its history
       const p = before.get(a.id);
-      const where = a.hostId === LOCAL ? a.workspace : `${a.hostName} · ${a.workspace}`;
-      const base = { agentId: a.id, workspace: where, title: a.title, at: next.at };
+      const base = { agentId: a.id, workspace: whereOf(a), title: a.title, at: next.at };
       if (a.attention && !p?.attention) {
         const tell = (text?: string | null) => this.emit({ type: "activity", data: { ...base, kind: "attention", text: text || "needs your input" } });
         // "permission prompt" says little: read the prompt's own title off the screen first.
-        if (a.detail && !GENERIC.test(a.detail)) tell(a.detail);
-        else this.screen(a.id).then(() => { this.rebuild(); tell(this.promptTitle(a.id) ?? a.detail); }, () => tell(a.detail));
+        const announce = () => {
+          if (a.detail && !GENERIC.test(a.detail)) tell(a.detail);
+          else this.screen(a.id).then(() => { this.rebuild(); tell(this.promptTitle(a.id) ?? a.detail); }, () => tell(a.detail));
+        };
+        if (prefs.autoDeliver) this.autoHold(a.id, announce);
+        else announce();
       }
       else if (a.state === "done" && p && (p.state === "working" || p.state === "waiting"))
         this.emit({ type: "activity", data: { ...base, kind: "done", text: clip(a.lastMessage, 300) ?? "finished" } });
@@ -468,6 +495,88 @@ export class OrcaWatcher {
         fn(ev);
       } catch {}
     }
+  }
+
+  // MARK: auto-deliver
+
+  private autoFor(id: string): Auto {
+    let st = this.autos.get(id);
+    if (!st) {
+      st = { next: Date.now() + AUTO_DELAY_MS, busy: false, tell: null, picked: false, sig: "", tries: 0, wait: 4000 };
+      this.autos.set(id, st);
+    }
+    return st;
+  }
+
+  /** Hold the "needs you" ping until auto-deliver has looked; ping anyway if it can't look in time. */
+  private autoHold(id: string, tell: () => void) {
+    const st = this.autoFor(id);
+    st.tell = tell;
+    setTimeout(() => this.autos.get(id) === st && this.autoTell(st), 8000);
+  }
+
+  private autoTell(st: Auto) {
+    const tell = st.tell;
+    st.tell = null;
+    tell?.();
+  }
+
+  private autoScan(snap: Snapshot) {
+    const waiting = new Set(snap.agents.filter((a) => a.attention).map((a) => a.id));
+    for (const id of this.autos.keys()) if (!waiting.has(id)) this.autos.delete(id);
+    if (!prefs.autoDeliver) {
+      for (const st of this.autos.values()) this.autoTell(st);
+      this.autos.clear();
+      return;
+    }
+    const now = Date.now();
+    for (const id of waiting) {
+      const st = this.autoFor(id);
+      if (st.busy || now < st.next) continue;
+      st.busy = true;
+      this.autoAnswer(id, st).finally(() => (st.busy = false));
+    }
+  }
+
+  private async autoAnswer(id: string, st: Auto) {
+    let view: ScreenView;
+    try {
+      view = await this.screen(id);
+    } catch {
+      st.next = Date.now() + 5000;
+      return;
+    }
+    const pick = autoChoice(view);
+    if (!pick) {
+      // Nothing to choose (a permission prompt, a question with no recommendation): it's
+      // yours. An empty screen right after a pick is only the menu going away.
+      if (view.options.length || !st.picked) this.autoTell(st);
+      st.next = Date.now() + st.wait;
+      st.wait = Math.min(st.wait * 2, 30_000);
+      return;
+    }
+    const sig = [...view.lines, ...view.options.map((o) => o.label)].join("\n");
+    st.tries = sig === st.sig ? st.tries + 1 : 1;
+    st.sig = sig;
+    if (st.tries > 3) {
+      this.autoTell(st);
+      st.next = Date.now() + 60_000;
+      return;
+    }
+    try {
+      await this.answer(id, { option: pick.option.n });
+    } catch (e) {
+      console.log(`[auto] ${id.split("|")[0]} ${pick.text}: failed, ${(e as Error).message}`);
+      st.next = Date.now() + 2000;
+      return;
+    }
+    st.picked = true;
+    st.tell = null;
+    st.wait = 4000;
+    st.next = Date.now() + 2500;
+    console.log(`[auto] ${id.split("|")[0]} ${pick.text}`);
+    const a = this.agent(id);
+    if (a) this.emit({ type: "activity", data: { kind: "auto", agentId: id, workspace: whereOf(a), title: a.title, text: pick.text, at: Date.now() } });
   }
 
   // MARK: actions

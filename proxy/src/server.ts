@@ -3,6 +3,8 @@
 //   GET  /health                     liveness
 //   GET  /status                     snapshot: hosts → projects → workspaces, agents with step timelines
 //   GET  /events                     SSE: `snapshot` on every change, `activity` on transitions
+//   GET  /prefs                      {autoDeliver}: settings Floe changes from its Settings tab
+//   POST /prefs                      {autoDeliver}  deliver held messages / pick recommended options for you
 //   GET  /agents/:id/screen          what the agent's terminal shows + parsed menu options
 //   POST /agents/:id/answer          {option:n} | {text}  answer a question / send a follow-up
 //   POST /agents/:id/focus           jump to that agent in Orca
@@ -26,6 +28,7 @@ import { Brain, type BrainEvent } from "./brain";
 import { OrcaWatcher } from "./orca";
 import { DemoWatcher } from "./demo";
 import { Sages } from "./sages";
+import { prefs, setPrefs } from "./prefs";
 
 const cfg = loadConfig();
 // FLOE_DEMO=1 runs against a made-up Orca (screenshots, videos, trying Floe without Orca).
@@ -124,6 +127,13 @@ const server = Bun.serve({
       if (m === "GET" && p === "/health") return json({ ok: true, orca: orca.snapshot.online, busy: brain.busy });
       if (m === "GET" && p === "/status") return json(orca.snapshot);
       if (m === "GET" && p === "/events") return events(req);
+      if (m === "GET" && p === "/prefs") return json({ ok: true, ...prefs });
+      if (m === "POST" && p === "/prefs") {
+        const next = setPrefs(await body(req));
+        console.log(`[prefs] autoDeliver ${next.autoDeliver ? "on" : "off"}`);
+        setTimeout(() => orca.poll(), 50); // act on prompts that are already waiting
+        return json({ ok: true, ...next });
+      }
       if (m === "GET" && p === "/chat") return json({ sessionId: brain.state.sessionId, busy: brain.busy, messages: brain.state.messages });
 
       if (m === "GET" && (p === "/scene.png" || p === "/scene.json")) {

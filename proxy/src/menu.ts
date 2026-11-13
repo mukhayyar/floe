@@ -117,3 +117,29 @@ export function parseScreen(tail: string[], opts: { unnumbered?: boolean } = {},
     .filter((l, i, arr) => l.trim() !== "" || (i > 0 && arr[i - 1].trim() !== ""));
   return { lines, options, numbered: isMenu ? numbered : true };
 }
+
+const DELIVER = /^deliver this message\b/i;
+const RECOMMENDED = /\(recommended\)/i;
+const SUBMIT = /^submit answers$/i;
+const UNANSWERED = /not answered all questions/i;
+/** A pick-any question: a digit toggles a box instead of answering, so Floe never auto-picks it. */
+const CHECKBOX = /^(\[[ x✓✔×]?\]|[☐☑☒◻◼□■])\s/i;
+
+/**
+ * What auto-deliver picks on this screen, if anything:
+ * - a message held from another session → "Deliver this message to Claude";
+ * - a question with an option marked "(Recommended)" → that option;
+ * - the review step after several questions, once all are answered → "Submit answers".
+ * Anything else (permission prompts, questions with no recommendation) is left to you.
+ */
+export function autoChoice(view: Pick<ScreenView, "lines" | "options">): { option: MenuOption; text: string } | null {
+  const { options, lines } = view;
+  if (options.length < 2 || options.some((o) => CHECKBOX.test(o.label))) return null;
+  const deliver = options.find((o) => DELIVER.test(o.label));
+  if (deliver) return { option: deliver, text: "Delivered the held message" };
+  const rec = options.find((o) => !o.freeText && RECOMMENDED.test(o.label));
+  if (rec) return { option: rec, text: `Picked “${rec.label.replace(RECOMMENDED, "").trim()}”` };
+  const submit = options.find((o) => SUBMIT.test(o.label));
+  if (submit && !lines.some((l) => UNANSWERED.test(l))) return { option: submit, text: "Submitted the answers" };
+  return null;
+}

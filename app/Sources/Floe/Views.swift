@@ -614,6 +614,15 @@ struct SettingsView: View {
                 Toggle("Play a sound when an agent asks something", isOn: $store.sound)
                 Toggle("Show a banner when an agent finishes", isOn: $store.peekOnDone)
                 Toggle("Colored border so Floe is easy to spot", isOn: $store.border)
+                Toggle(isOn: Binding(get: { store.autoDeliver }, set: { store.setAutoDeliver($0) })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Auto-deliver")
+                        Text("Delivers messages held from other sessions and picks the option an agent marks “Recommended”, without asking. Permission prompts still wait for you.")
+                            .font(.system(size: 10.5)).foregroundStyle(Color.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .disabled(!store.proxyOnline)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Position").font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.dim)
                     Text("Drag Floe left or right along the top edge. It snaps to the notch. Right-click it for more.")

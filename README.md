@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/mukhayyar/floe/main/install.sh | ba
 
 | | |
 |---|---|
-| <img src="docs/live.png" width="300" alt="Live tab"> | **Live.** Agents that need you come first, then working, then recently finished. Each one shows its tool calls as a timeline that draws itself step by step. When an agent asks a question or wants permission, its options are buttons: tap one, or type an answer. |
+| <img src="docs/live.png" width="300" alt="Live tab"> | **Live.** Agents that need you come first, then working, then recently finished. Each one shows its tool calls as a timeline that draws itself step by step. When an agent asks a question or wants permission, its options are buttons: tap one, or type an answer. Turn on **Auto-deliver** and Floe answers some prompts itself (see Settings). |
 | <img src="docs/hosts.png" width="300" alt="Hosts tab"> | **Hosts.** Every Orca host is a karakuri sage riding an orca through the open sea, before a snowy island with a shrine and a great torii standing in the water. Each orca swims its own loop, always facing the way it goes, and riding the swell. While its agents work, it swims faster, beating its flukes and leaving a wake, and the sage writes on its scroll (or types, on this Mac). When one needs you, it swims to the front and waits there, spouting, while the sage strikes its singing bowl. When the host is offline, it drifts asleep by the island with its lantern out. |
 | <img src="docs/host.png" width="300" alt="A host"> | **Drill down.** Tap a sage, then a project, then a worktree: its agents and terminals (the main terminal is marked). Peek at a terminal, type into it, message an agent, start Claude or Codex, or jump to it in Orca. |
 | <img src="docs/project.png" width="300" alt="A project"> | **Ask Orca.** The Ask tab is a headless Claude Code session that can read your repos and drive Orca through its CLI, on any host. Pick a worktree and its pill sits above the input, so you know where a message goes. |
@@ -99,6 +99,16 @@ out. While a full-screen game is in front, a right-click on the pill opens the m
 pointer has rested on it, so moving your hero across the top of the screen won't open it.
 
 ## Settings
+
+**Auto-deliver** (Settings tab, off by default) lets Floe answer for you while you're away:
+- It delivers messages that another Claude session sent and Claude held for your approval.
+- It picks the option an agent marked "(Recommended)" when asking a question. After several
+  questions, it submits the answers once all are answered.
+
+Floe never auto-picks permission prompts, questions with no recommended option, or questions where
+you can pick more than one. You get a short banner each time it answers. The proxy does the
+answering, so it works while Floe is collapsed. It keeps the setting in
+`~/.config/floe/prefs.json`.
 
 `~/.config/floe/config.json` (restart Floe after editing):
 

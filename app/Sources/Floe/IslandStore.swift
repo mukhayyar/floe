@@ -35,6 +35,8 @@ final class IslandStore: ObservableObject {
     @Published var sound: Bool { didSet { UserDefaults.standard.set(sound, forKey: "sound") } }
     @Published var peekOnDone: Bool { didSet { UserDefaults.standard.set(peekOnDone, forKey: "peekOnDone") } }
     @Published var border: Bool { didSet { UserDefaults.standard.set(border, forKey: "border") } }
+    /// Kept by the proxy (it answers even while Floe is closed): deliver held messages, pick recommended options.
+    @Published var autoDeliver = false
 
     /// Set by the window controller: give the panel keyboard focus.
     var requestKey: (() -> Void)?
@@ -237,7 +239,7 @@ final class IslandStore: ObservableObject {
                 req.timeoutInterval = 60
                 do {
                     for try await ev in sseStream(req) {
-                        if !proxyOnline { proxyOnline = true }
+                        if !proxyOnline { proxyOnline = true; Task { await loadPrefs() } }
                         backoff = 1
                         handle(ev)
                     }
@@ -275,6 +277,8 @@ final class IslandStore: ObservableObject {
             if sound { NSSound(named: "Tink")?.play() }
             Task { await fetchScreen(a.agentId) }
             showPeek(Peek(mood: .attention, title: "\(a.workspace) needs you", text: a.text, agentId: a.agentId), seconds: 9)
+        case "auto":
+            showPeek(Peek(mood: .done, title: "Floe answered for \(a.workspace)", text: a.text, agentId: a.agentId), seconds: 5)
         case "done":
             if peekOnDone {
                 showPeek(Peek(mood: .done, title: "\(a.workspace) finished", text: a.text, agentId: a.agentId), seconds: 6)
@@ -561,6 +565,21 @@ final class IslandStore: ObservableObject {
             let r = await post("chat/open", [:])
             if r.ok { collapse() } else { say(r.message) }
         }
+    }
+
+    func setAutoDeliver(_ on: Bool) {
+        autoDeliver = on
+        Task {
+            let r = await post("prefs", ["autoDeliver": on])
+            if !r.ok { autoDeliver = !on; say(r.message.isEmpty ? "Couldn't change auto-deliver" : r.message) }
+        }
+    }
+
+    private func loadPrefs() async {
+        guard let url = URL(string: "\(base)/prefs"),
+              let (data, _) = try? await URLSession.shared.data(from: url),
+              let j = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+        autoDeliver = j["autoDeliver"] as? Bool ?? false
     }
 
     private func loadChat() async {

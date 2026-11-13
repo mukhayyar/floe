@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { parseScreen } from "./menu";
+import { autoChoice, parseScreen } from "./menu";
 
 test("Claude AskUserQuestion menu", () => {
   const tail = [
@@ -112,4 +112,44 @@ test("unnumbered menu with descriptions under each option", () => {
   ];
   const v = parseScreen(tail, { unnumbered: true });
   expect(v.options.map((o) => o.label)).toEqual(["Continue with browser tools", "Continue without browser tools"]);
+});
+
+test("auto-deliver delivers a held message", () => {
+  const pick = autoChoice(parseScreen(HELD, { unnumbered: true }));
+  expect(pick?.option.label).toBe("Deliver this message to Claude");
+  expect(pick?.option.n).toBe(2);
+});
+
+test("auto-deliver picks the recommended option, never a free-text one", () => {
+  const tail = [
+    " Which cache should the API use?",
+    " ❯ 1. Redis (Recommended)",
+    "      Already running in staging",
+    "   2. In-memory",
+    "      Simplest, lost on restart",
+    "   3. Type something.",
+  ];
+  const pick = autoChoice(parseScreen(tail));
+  expect(pick?.option.n).toBe(1);
+  expect(pick?.text).toBe("Picked “Redis”");
+  expect(autoChoice({ lines: [], options: [
+    { n: 1, label: "Yes", selected: true, freeText: false },
+    { n: 2, label: "Something else (recommended)", selected: false, freeText: true },
+  ] })).toBeNull();
+});
+
+test("auto-deliver leaves permission prompts and plain questions to you", () => {
+  const perm = [" Bash command", "   rm -rf build", " Do you want to proceed?", " ❯ 1. Yes", "   2. Yes, and don't ask again for rm commands", "   3. No, and tell Claude what to do differently (esc)"];
+  expect(autoChoice(parseScreen(perm))).toBeNull();
+  const plain = [" Pick a colour", " ❯ 1. Red", "   2. Green", "   3. Type something."];
+  expect(autoChoice(parseScreen(plain))).toBeNull();
+});
+
+test("auto-deliver skips pick-any questions and submits only complete answers", () => {
+  const multi = [" Which checks?", " ❯ 1. [ ] Lint (Recommended)", "   2. [ ] Tests"];
+  expect(autoChoice(parseScreen(multi))).toBeNull();
+  const review = [" Review your answers", "  → Which cache? Redis", " Ready to submit your answers?", " ❯ 1. Submit answers", "   2. Cancel"];
+  expect(autoChoice(parseScreen(review))?.text).toBe("Submitted the answers");
+  const partial = [" Review your answers", " ⚠ You have not answered all questions", " Ready to submit your answers?", " ❯ 1. Submit answers", "   2. Cancel"];
+  expect(autoChoice(parseScreen(partial))).toBeNull();
 });
