@@ -153,3 +153,86 @@ test("auto-deliver skips pick-any questions and submits only complete answers", 
   const partial = [" Review your answers", " ⚠ You have not answered all questions", " Ready to submit your answers?", " ❯ 1. Submit answers", "   2. Cancel"];
   expect(autoChoice(parseScreen(partial))).toBeNull();
 });
+
+// Claude's AskUserQuestion with two questions, the first pick-any (read off a live screen).
+const MULTI = [
+  "─".repeat(80),
+  "←  ☒ Additions  ☐ Scope  ✔ Submit  →",
+  "Which additions should the refactor also do?",
+  "❯ 1. [ ] Comments",
+  "         Remove comments that only restate the code.",
+  "  2. [✔] Tests",
+  "         Remove tests that cannot catch a real bug.",
+  "  3. [ ] Type something",
+  "     Next",
+  "─".repeat(80),
+  "  4. Chat about this",
+  "Enter to select · Tab/Arrow keys to navigate · Esc to cancel",
+];
+
+test("Claude pick-any question with tabs", () => {
+  const v = parseScreen(MULTI);
+  expect(v.multi).toBe(true);
+  expect(v.steps).toBe(true);
+  expect(v.tabs).toEqual([{ label: "Additions", done: true }, { label: "Scope", done: false }, { label: "Submit", done: true }]);
+  expect(v.options.map((o) => [o.label, o.checked])).toEqual([["Comments", false], ["Tests", true], ["Type something", false], ["Chat about this", undefined]]);
+  expect(v.options[0].description).toBe("Remove comments that only restate the code.");
+  expect(v.options[2].freeText).toBe(true);
+  expect(v.options[2].description).toBeUndefined(); // "Next" is the step row, not a description
+  expect(v.lines[0]).toBe("Which additions should the refactor also do?");
+  expect(autoChoice(v)).toBeNull(); // pick-any questions are yours
+});
+
+test("Codex question: same-line descriptions and question count", () => {
+  const tail = ["  Question 1/2 (2 unanswered)", "  Choose an option.", "", "  › 1. Option 1 (Recommended)  First choice.", "    2. Option 2  Second choice.", "    3. None of the above  Optionally, add details in notes (tab)", "", "  tab to add notes | enter to submit answer | ←/→ to navigate questions | esc to interrupt"];
+  const v = parseScreen(tail);
+  expect(v.options.map((o) => o.label)).toEqual(["Option 1 (Recommended)", "Option 2", "None of the above"]);
+  expect(v.options[1].description).toBe("Second choice.");
+  expect(v.steps).toBe(true);
+  expect(autoChoice(v)?.text).toBe("Picked “Option 1”");
+});
+
+test("Gemini question and approval", () => {
+  const q = ["Which authentication method should we use?", "", "● 1.  OAuth 2.0", "      Industry standard, supports SSO", "  2.  JWT tokens", "      Stateless, good for APIs", "  3.  Enter a custom value", "", "Enter to select · ↑/↓ to navigate · Esc to cancel"];
+  const v = parseScreen(q);
+  expect(v.options.map((o) => o.label)).toEqual(["OAuth 2.0", "JWT tokens", "Enter a custom value"]);
+  expect(v.options[0].description).toBe("Industry standard, supports SSO");
+  expect(v.options[2].freeText).toBe(true);
+  const a = ["│ ? Shell  list files                                1 of 3 │", "│ Allow execution of [Shell]?                               │", "│                                                           │", "│ ● 1. Allow once                                           │", "│   2. Allow for this session                               │", "│   3. No, suggest changes (esc)                            │"];
+  expect(parseScreen(a).options.map((o) => o.label)).toEqual(["Allow once", "Allow for this session", "No, suggest changes (esc)"]);
+});
+
+test("Kimi approval and bracketed question numbers", () => {
+  const a = ["  ▶ Run this command?", "  $ ls -la", "", "  ▶ 1. Approve once", "    2. Approve for this session", "    3. Reject", "    4. Reject with feedback", "", "  ↑/↓ select · 1/2/3/4 choose · ↵ confirm"];
+  expect(parseScreen(a).options.map((o) => o.label)).toEqual(["Approve once", "Approve for this session", "Reject", "Reject with feedback"]);
+  const q = [" ? Which database?", "  → [1] Postgres (Recommended)", "    [2] SQLite", "    [3] Other"];
+  const v = parseScreen(q);
+  expect(v.options.map((o) => o.label)).toEqual(["Postgres (Recommended)", "SQLite", "Other"]);
+  expect(autoChoice(v)?.option.n).toBe(1);
+  expect(autoChoice(parseScreen(["  → [1] Submit", "    [2] Cancel"]))?.text).toBe("Submitted the answers");
+});
+
+test("pi and OMP pointer lists, Goose radio lists", () => {
+  const pi = ["─".repeat(30), "", " Run tests?", " npm test", "", " → Yes", "   No", "", " ↑↓ navigate  enter select  escape/ctrl+c cancel", "", "─".repeat(30)];
+  expect(parseScreen(pi, { unnumbered: true }).options.map((o) => [o.label, o.selected])).toEqual([["Yes", true], ["No", false]]);
+  const omp = ["╭─ Allow tool: bash ─────────────────────╮", "│ Command: npm test                      │", "│ ❯ Approve                              │", "│   Approve bash for this session        │", "│   Deny                                 │", "├────────────────────────────────────────┤", "│ ↑/↓ choose · ⏎ select · ⌃⏎/⌃Q approve …│", "╰────────────────────────────────────────╯"];
+  expect(parseScreen(omp, { unnumbered: true }).options.map((o) => o.label)).toEqual(["Approve", "Approve bash for this session", "Deny"]);
+  const form = ["│ Session store                          │", "│ ❯ ◉ SQLite: one file, no new service   │", "│   ○ Redis: shared across instances     │", "│   ○ Other: type your own               │", "│                                        │"];
+  const f = parseScreen(form, { unnumbered: true });
+  expect(f.options.map((o) => o.label)).toEqual(["SQLite: one file, no new service", "Redis: shared across instances", "Other: type your own"]);
+  expect(f.options[2].freeText).toBe(true);
+  const goose = ["◆  Goose would like to call the above tool, do you allow?", "│  ● Allow (Allow the tool call once)", "│  ○ Always Allow ", "│  ○ Deny ", "│  ○ Cancel ", "└  "];
+  expect(parseScreen(goose, { unnumbered: true }).options.map((o) => [o.label, o.selected])).toEqual([["Allow (Allow the tool call once)", true], ["Always Allow", false], ["Deny", false], ["Cancel", false]]);
+});
+
+test("button prompts are answered with each harness's keys", () => {
+  const oc = ["┃ △ Permission required", "┃ $ rm -rf build", "┃", "┃  Allow once   Always allow   Reject ", "  ctrl+f fullscreen  ⇆ select  enter confirm"];
+  const v = parseScreen(oc, { agent: "opencode" });
+  expect(v.options.map((o) => [o.label, o.keys])).toEqual([["Allow once", ["\r"]], ["Always allow", ["\x1b[C", "\r"]], ["Reject", ["\x1b"]]]);
+  expect(parseScreen(oc).options).toEqual([]); // without knowing it's OpenCode, don't guess
+  const crush = ["Permission Required ╱╱╱╱╱╱", "Tool bash", "Path ~/code", "  Allow      Allow for Session      Deny  ", "←/→ choose • enter confirm • esc exit"];
+  expect(parseScreen(crush, { agent: "crush" }).options.map((o) => o.keys)).toEqual([["a"], ["s"], ["d"]]);
+  expect(parseScreen(["Approve tool call?", "[y] approve  [n] deny"], { agent: "cline" }).options.map((o) => o.label)).toEqual(["Approve", "Deny"]);
+  const aider = ["Run shell command? (Y)es/(N)o/(D)on't ask again [Yes]: "];
+  expect(parseScreen(aider, { agent: "aider" }).options.map((o) => [o.label, o.keys])).toEqual([["Yes", ["y", "\r"]], ["No", ["n", "\r"]], ["Don't ask again", ["d", "\r"]]]);
+});

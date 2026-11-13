@@ -37,9 +37,9 @@ curl -fsSL https://raw.githubusercontent.com/mukhayyar/floe/main/install.sh | ba
 
 | | |
 |---|---|
-| <img src="docs/live.png" width="300" alt="Live tab"> | **Live.** Agents that need you come first, then working, then recently finished. Each one shows its tool calls as a timeline that draws itself step by step. When an agent asks a question or wants permission, its options are buttons: tap one, or type an answer. Turn on **Auto-deliver** and Floe answers some prompts itself (see Settings). |
+| <img src="docs/live.png" width="300" alt="Live tab"> | **Live.** Agents that need you come first, then working, then recently finished. Each one shows its tool calls as a timeline that draws itself step by step. When an agent asks a question or wants permission, its options are buttons with their descriptions: tap one, or type an answer. A question in several parts shows its tabs, and a pick-any question shows checkboxes with Back and Next. Turn on **Auto-deliver** and Floe answers some prompts itself (see Settings). |
 | <img src="docs/hosts.png" width="300" alt="Hosts tab"> | **Hosts.** Every Orca host is a karakuri sage riding an orca through the open sea, before a snowy island with a shrine and a great torii standing in the water. Each orca swims its own loop, always facing the way it goes, and riding the swell. While its agents work, it swims faster, beating its flukes and leaving a wake, and the sage writes on its scroll (or types, on this Mac). When one needs you, it swims to the front and waits there, spouting, while the sage strikes its singing bowl. When the host is offline, it drifts asleep by the island with its lantern out. |
-| <img src="docs/host.png" width="300" alt="A host"> | **Drill down.** Tap a sage, then a project, then a worktree: its agents and terminals (the main terminal is marked). Peek at a terminal, type into it, message an agent, start Claude or Codex, or jump to it in Orca. |
+| <img src="docs/host.png" width="300" alt="A host"> | **Drill down.** Tap a sage, then a project, then a worktree: its agents and terminals (the main terminal is marked). Peek at a terminal, type into it, message an agent, start any agent installed on that host (your Orca default first), or jump to it in Orca. |
 | <img src="docs/project.png" width="300" alt="A project"> | **Ask Orca.** The Ask tab is a headless Claude Code session that can read your repos and drive Orca through its CLI, on any host. Pick a worktree and its pill sits above the input, so you know where a message goes. |
 
 The collapsed pill wraps the notch like a live activity: a spinner and a count while agents work, an
@@ -73,6 +73,21 @@ Floe swims them with Core Animation:
 
 Moonlight glints drift across the sea and fireflies over the island. All of it runs in the
 render server, so it costs the app nothing per frame.
+
+### Every agent harness
+
+Floe shows every agent Orca runs, under its own name: Claude, Codex, OMP, Pi, Gemini, OpenCode,
+Kimi, Goose, Crush, Cline, Aider and the rest of Orca's catalog. Each host offers the harnesses
+installed on it. Floe reads each harness's questions and approvals off its screen and answers them
+the way that harness expects:
+
+| How it answers | Harnesses |
+|---|---|
+| Presses the option's digit | Claude, Codex, Gemini, OpenCode questions, Kimi, Cline questions, Qwen Code |
+| Moves the cursor with ↑/↓ and checks where it landed, then Enter (Space ticks a box) | Pi, OMP, Goose, Crush questions |
+| Uses the harness's own keys for button rows that show their highlight only in colour | OpenCode (Enter / Esc), Crush (`a`/`s`/`d`), Cline (`y`/`n`), Aider (`y`/`n`/`d`) |
+
+Floe never sends Esc to answer a question. In Codex and OMP, Esc stops the whole turn.
 
 ### Built for games
 
@@ -145,7 +160,8 @@ Floe.app (Swift, AppKit + SwiftUI)  ──HTTP/SSE──▶  proxy (Bun, 127.0.0
 
 - `proxy/src/orca.ts` polls every host and builds the host → project → worktree → agent
   snapshot. It tracks each agent's tool steps and emits `snapshot` and `activity` events.
-  `menu.ts` reads choice menus off an agent's screen (`bun test`).
+  `menu.ts` reads choice menus off an agent's screen for each harness, including checkboxes,
+  descriptions and question tabs (`bun test`). `agents.ts` names the harnesses.
 - `sage/` holds the sages and their sea:
   - `sage.mjs` is the orca rider and its four loops, from the front or behind (`sage.mjs?az=232`);
     `palette.mjs` holds the materials.

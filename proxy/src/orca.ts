@@ -118,6 +118,19 @@ interface Auto {
   wait: number;
 }
 
+/**
+ * Harnesses whose menus ignore digits: Floe moves the cursor with the arrow keys instead and checks
+ * it landed (pi and OMP lists, Goose's cliclack, Crush questions). Every other harness picks a
+ * numbered option with its digit (Claude, Codex, Gemini, OpenCode, Kimi, Cline, Qwen…).
+ */
+const ARROW_HARNESSES = new Set(["pi", "omp", "goose", "crush", "prime-agent"]);
+/** Harnesses whose composer line starts with a menu glyph ("› " in Codex): never read it as a menu. */
+const NO_POINTER_MENUS = new Set(["codex", "grok"]);
+const UP = "\x1b[A";
+const DOWN = "\x1b[B";
+const RIGHT = "\x1b[C";
+const LEFT = "\x1b[D";
+
 /** A dialog may refuse keys that arrive right after it opens (Claude's held-message dialog does). */
 const AUTO_DELAY_MS = 1500;
 
@@ -654,7 +667,8 @@ export class OrcaWatcher {
       ({ runtime, handle } = await this.terminalFor(id, true)); // terminal restarted: look it up again
       res = await this.rpc.call<any>(runtime, "terminal.read", { terminal: handle, screen: true });
     }
-    const view = { handle, ...parseScreen(res.terminal?.tail ?? [], { unnumbered: !!this.agent(id)?.attention }) };
+    const a = this.agent(id);
+    const view = { handle, ...parseScreen(res.terminal?.tail ?? [], { agent: a?.agentType, unnumbered: !!a?.attention && !NO_POINTER_MENUS.has(a.agentType) }) };
     this.screens.set(id, { view, at: Date.now() });
     return view;
   }
@@ -683,34 +697,49 @@ export class OrcaWatcher {
     setTimeout(() => this.pollHost(runtime), 1000);
   }
 
-  /** Answer a menu option, type a free-text answer, or send a follow-up prompt. */
-  async answer(id: string, body: { option?: number; text?: string }): Promise<string> {
+  /** Answer a menu option, step between questions, type a free-text answer, or send a follow-up prompt. */
+  async answer(id: string, body: { option?: number; text?: string; step?: "next" | "back" }): Promise<string> {
     const { runtime } = this.route(id);
+    const harness = this.agent(id)?.agentType ?? "";
     // The island just showed this screen; reuse it if it's fresh instead of reading again.
     const recent = this.screens.get(id);
-    const view = recent && Date.now() - recent.at < 8000 ? recent.view : await this.screen(id);
-    const { handle, options } = view;
+    let view = recent && Date.now() - recent.at < 8000 ? recent.view : await this.screen(id);
+    if (body.step) return this.step(id, view, body.step);
     if (body.option !== undefined) {
-      if (!view.numbered) return this.pickByArrows(id, body.option);
-      if (!options.some((o) => o.n === body.option)) {
-        const now = await this.screen(id); // the menu may have changed: check the live screen once
-        if (!now.options.some((o) => o.n === body.option)) throw new OrcaError(`Option ${body.option} is no longer on screen`, "stale_menu");
+      if (!view.options.some((o) => o.n === body.option)) {
+        view = await this.screen(id); // the menu may have changed: check the live screen once
+        if (!view.options.some((o) => o.n === body.option)) throw new OrcaError(`Option ${body.option} is no longer on screen`, "stale_menu");
       }
-      await this.keys(runtime, handle, String(body.option), false);
+      const { handle, options } = view;
+      const pick = options.find((o) => o.n === body.option)!;
+      // A pick-any box toggles (a digit in Claude, Gemini and OpenCode; Space where the cursor moves).
+      const toggle = pick.checked !== undefined;
+      if (pick.keys) {
+        for (const [i, k] of pick.keys.entries()) {
+          if (i) await Bun.sleep(120);
+          await this.keys(runtime, handle, k, false);
+        }
+      } else if (!view.numbered || ARROW_HARNESSES.has(harness)) {
+        return this.pickByArrows(id, body.option, toggle ? " " : "\r");
+      } else {
+        await this.keys(runtime, handle, String(body.option), false);
+      }
       this.screens.delete(id);
       this.settle(runtime);
-      return `picked ${body.option}`;
+      return toggle ? `${pick.checked ? "unticked" : "ticked"} “${pick.label}”` : `picked “${pick.label}”`;
     }
+    const { handle, options } = view;
     const text = body.text?.trim();
     if (!text) throw new OrcaError("Nothing to send", "invalid_argument");
     if (options.length) {
       // A menu is up: route the text through its free-text option when it has one.
       const free = options.find((o) => o.freeText);
       if (!free) throw new OrcaError("This prompt only accepts one of its options", "menu_only");
-      await this.keys(runtime, handle, String(free.n), false);
+      if (ARROW_HARNESSES.has(harness) || !view.numbered) await this.moveTo(id, free.n);
+      else await this.keys(runtime, handle, String(free.n), false);
       await Bun.sleep(250);
       await this.keys(runtime, handle, text, false);
-      await Bun.sleep(80);
+      await Bun.sleep(150); // Gemini reads an Enter within 30 ms of typing as a newline
       await this.keys(runtime, handle, null, true);
       this.screens.delete(id);
       this.settle(runtime);
@@ -722,10 +751,10 @@ export class OrcaWatcher {
   }
 
   /**
-   * A menu without numbers: read where the ❯ is right now (someone may have moved it in the
-   * terminal), step it to the option with ↑/↓ one key at a time, then press Enter.
+   * Move the cursor to option n with ↑/↓ one key at a time, from wherever it is right now (someone
+   * may have moved it in the terminal), and check it landed there.
    */
-  private async pickByArrows(id: string, n: number): Promise<string> {
+  private async moveTo(id: string, n: number): Promise<{ handle: string; label: string }> {
     const { runtime } = this.route(id);
     const { handle, options } = await this.screen(id);
     const want = options.find((o) => o.n === n);
@@ -733,16 +762,46 @@ export class OrcaWatcher {
     if (!want || from < 0) throw new OrcaError(`Option ${n} is no longer on screen`, "stale_menu");
     const steps = n - 1 - from;
     for (let i = 0; i < Math.abs(steps); i++) {
-      await this.keys(runtime, handle, steps > 0 ? "\x1b[B" : "\x1b[A", false);
+      await this.keys(runtime, handle, steps > 0 ? DOWN : UP, false);
       await Bun.sleep(90);
     }
-    // Check the ❯ landed on the right option before committing to it.
     const now = await this.screen(id);
     if (!now.options.find((o) => o.n === n)?.selected) throw new OrcaError(`Couldn't move to “${want.label}”; pick it in the terminal`, "stale_menu");
-    await this.keys(runtime, handle, null, true);
+    return { handle: now.handle, label: want.label };
+  }
+
+  /** A menu picked by moving the cursor: move to option n, then Enter (or Space to tick a box). */
+  private async pickByArrows(id: string, n: number, commit = "\r"): Promise<string> {
+    const { runtime } = this.route(id);
+    const { handle, label } = await this.moveTo(id, n);
+    if (commit === "\r") await this.keys(runtime, handle, null, true);
+    else await this.keys(runtime, handle, commit, false);
     this.screens.delete(id);
     this.settle(runtime);
-    return `picked “${want.label}”`;
+    return commit === "\r" ? `picked “${label}”` : `toggled “${label}”`;
+  }
+
+  /**
+   * Move between questions. Claude, Codex and Gemini step with ← and →. A lone pick-any question
+   * with a "Next"/"Done" row and no tabs is finished by moving onto that row and pressing Enter.
+   */
+  private async step(id: string, view: ScreenView & { handle: string }, dir: "next" | "back"): Promise<string> {
+    const { runtime } = this.route(id);
+    if (dir === "next" && view.multi && !view.tabs?.length && view.options.some((o) => o.selected)) {
+      // The "Next"/"Done" row sits right after the last box.
+      const boxes = view.options.filter((o) => o.checked !== undefined).length;
+      const from = view.options.findIndex((o) => o.selected);
+      for (let i = from; i < boxes; i++) {
+        await this.keys(runtime, view.handle, DOWN, false);
+        await Bun.sleep(90);
+      }
+      await this.keys(runtime, view.handle, null, true);
+    } else {
+      await this.keys(runtime, view.handle, dir === "next" ? RIGHT : LEFT, false);
+    }
+    this.screens.delete(id);
+    this.settle(runtime);
+    return dir === "next" ? "next question" : "previous question";
   }
 
   async focus(id: string) {

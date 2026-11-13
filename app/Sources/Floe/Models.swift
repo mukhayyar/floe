@@ -122,12 +122,34 @@ struct MenuOption: Codable, Identifiable, Equatable {
     let label: String
     let selected: Bool
     let freeText: Bool
+    /// Pick-any questions: whether the box is ticked. nil on ordinary options.
+    var checked: Bool?
+    var description: String?
     var id: Int { n }
+}
+
+/// One question in a multi-question prompt ("☒ Additions", "☐ Scope", "✔ Submit").
+struct MenuTab: Codable, Equatable, Identifiable {
+    let label: String
+    let done: Bool
+    var id: String { label }
 }
 
 struct ScreenView: Codable, Equatable {
     let lines: [String]
-    let options: [MenuOption]
+    var options: [MenuOption]
+    /// Pick-any: tapping toggles a box, Next moves on.
+    var multi: Bool?
+    var tabs: [MenuTab]?
+    /// Back / Next step between the questions.
+    var steps: Bool?
+
+    /// The prompt's own lines, without the options drawn again below them.
+    var promptLines: [String] {
+        guard let first = options.first?.label, !first.isEmpty,
+              let cut = lines.firstIndex(where: { $0.contains(first) }) else { return lines }
+        return Array(lines[..<cut])
+    }
 }
 
 struct ChatMessage: Codable, Identifiable, Equatable {

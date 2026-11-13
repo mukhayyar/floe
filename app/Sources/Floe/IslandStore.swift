@@ -429,14 +429,32 @@ final class IslandStore: ObservableObject {
         // Feel it immediately: pressed state + a trackpad tick before the network round trip.
         answering[agent.id] = option.n
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        let toggle = option.checked != nil
         Task {
             let r = await post("agents/\(path(agent.id))/answer", ["option": option.n])
-            if r.ok, let s = screens[agent.id] {
-                withAnimation(.easeOut(duration: 0.2)) { screens[agent.id] = ScreenView(lines: s.lines, options: []) }
+            if r.ok, var s = screens[agent.id] {
+                // A box flips and the question stays up; any other pick answers it.
+                if toggle { s.options = s.options.map { o in var o = o; if o.n == option.n { o.checked = !(o.checked ?? false) }; return o } }
+                else { s = ScreenView(lines: s.lines, options: []) }
+                withAnimation(.easeOut(duration: 0.2)) { screens[agent.id] = s }
             }
             answering[agent.id] = nil
-            say(r.ok ? "Picked \(option.n) · \(option.label)" : r.message)
+            if !r.ok { say(r.message) } else if !toggle { say("Picked \(option.n) · \(option.label)") }
             try? await Task.sleep(nanoseconds: 350_000_000)
+            await fetchScreen(agent.id)
+        }
+    }
+
+    /// Back / Next between the questions of a multi-question prompt.
+    func step(_ agent: Agent, _ dir: String) {
+        guard answering[agent.id] == nil else { return }
+        answering[agent.id] = dir == "next" ? -1 : -2
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        Task {
+            let r = await post("agents/\(path(agent.id))/answer", ["step": dir])
+            answering[agent.id] = nil
+            if !r.ok { say(r.message) }
+            try? await Task.sleep(nanoseconds: 300_000_000)
             await fetchScreen(agent.id)
         }
     }

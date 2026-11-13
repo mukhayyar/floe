@@ -98,9 +98,10 @@ struct AgentCard: View {
     @ViewBuilder
     private var detailBody: some View {
         if let screen = store.screens[agent.id] {
-            if !screen.lines.isEmpty {
+            let shown = screen.options.isEmpty ? screen.lines : screen.promptLines
+            if !shown.isEmpty {
                 ScrollView {
-                    Text(screen.lines.suffix(14).joined(separator: "\n"))
+                    Text(shown.suffix(14).joined(separator: "\n"))
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.75))
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -110,7 +111,10 @@ struct AgentCard: View {
                 .padding(8)
                 .background(RoundedRectangle(cornerRadius: 9).fill(Color.black.opacity(0.55)))
             }
-            if !screen.options.isEmpty {
+            if let tabs = screen.tabs, !tabs.isEmpty { QuestionTabs(tabs: tabs) }
+            if !screen.options.isEmpty, screen.multi == true || screen.options.contains(where: { $0.description != nil }) {
+                OptionList(agent: agent, screen: screen)
+            } else if !screen.options.isEmpty {
                 let sending = store.answering[agent.id]
                 FlowLayout(spacing: 6) {
                     ForEach(screen.options) { o in
@@ -144,6 +148,7 @@ struct AgentCard: View {
                     }
                 }
             }
+            if !screen.options.isEmpty, screen.steps == true { StepButtons(agent: agent, screen: screen) }
         } else if agent.attention != nil {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
@@ -157,6 +162,98 @@ struct AgentCard: View {
                 .lineLimit(14)
                 .textSelection(.enabled)
         }
+    }
+}
+
+/// Options as rows, with each one's description under it. Pick-any options are checkboxes that
+/// stay up while you tick them; Next sends the answer on.
+struct OptionList: View {
+    @EnvironmentObject var store: IslandStore
+    let agent: Agent
+    let screen: ScreenView
+
+    var body: some View {
+        let sending = store.answering[agent.id]
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(screen.options) { o in
+                let mine = sending == o.n
+                Button { store.answer(agent, option: o) } label: {
+                    HStack(alignment: .top, spacing: 8) {
+                        ZStack {
+                            if mine {
+                                Spinner(color: .white.opacity(0.85), lineWidth: 1.6).padding(2)
+                            } else if let checked = o.checked {
+                                Image(systemName: checked ? "checkmark.square.fill" : "square")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(checked ? Color.orcaGreen : Color.white.opacity(0.6))
+                            } else {
+                                Circle().fill(Color.white.opacity(o.selected ? 0.95 : 0.6))
+                                Text("\(o.n)").font(.system(size: 10.5, weight: .bold, design: .rounded)).foregroundStyle(.black.opacity(0.7))
+                            }
+                        }
+                        .frame(width: 16, height: 16)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(o.freeText ? "✎ \(o.label)" : o.label)
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.92))
+                            if let d = o.description {
+                                Text(d).font(.system(size: 10.5)).foregroundStyle(Color.dim).lineLimit(2)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(o.checked == true ? 0.13 : 0.07)))
+                    .opacity(sending != nil && !mine ? 0.5 : 1)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(sending != nil)
+                .help(o.checked != nil ? "Tick or untick" : "Pick this")
+            }
+        }
+    }
+}
+
+/// The questions of a multi-question prompt, ticked once answered.
+struct QuestionTabs: View {
+    let tabs: [MenuTab]
+
+    var body: some View {
+        FlowLayout(spacing: 5) {
+            ForEach(tabs) { t in
+                HStack(spacing: 4) {
+                    Image(systemName: t.label == "Submit" ? "paperplane" : t.done ? "checkmark.square.fill" : "square")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(t.done && t.label != "Submit" ? Color.orcaGreen : Color.white.opacity(0.6))
+                    Text(t.label).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white.opacity(0.8))
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.white.opacity(0.08)))
+            }
+        }
+    }
+}
+
+/// Back / Next between questions. Next is the way on from a pick-any question.
+struct StepButtons: View {
+    @EnvironmentObject var store: IslandStore
+    let agent: Agent
+    let screen: ScreenView
+
+    var body: some View {
+        let busy = store.answering[agent.id] != nil
+        HStack(spacing: 6) {
+            if screen.tabs?.isEmpty == false {
+                ActionButton(title: "Back", symbol: "chevron.left") { store.step(agent, "back") }
+            }
+            ActionButton(title: screen.multi == true ? "Next" : "Skip", symbol: "chevron.right", prominent: screen.multi == true) { store.step(agent, "next") }
+            Spacer(minLength: 0)
+        }
+        .disabled(busy)
+        .opacity(busy ? 0.6 : 1)
     }
 }
 
