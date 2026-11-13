@@ -105,23 +105,29 @@ async function launchInstaller(target: string): Promise<void> {
     child.unref();
     return;
   }
+  const log = psQuote(LOG);
   const script = [
+    `"installer started (pid $PID)" | Out-File -Append -Encoding utf8 -FilePath ${log}`,
     `$env:FLOE_PREFIX = ${psQuote(ROOT)}`,
     `$env:FLOE_VERSION = ${psQuote(`v${target}`)}`,
-    `& { irm ${RAW}/install.ps1 | iex } *>> ${psQuote(LOG)}`,
+    // Out-String keeps the log UTF-8 (Windows PowerShell's own redirection writes UTF-16)
+    `try { & { irm ${RAW}/install.ps1 | iex } *>&1 | Out-String -Stream | Out-File -Append -Encoding utf8 -FilePath ${log} }`
+      + ` catch { "the update failed: $_" | Out-File -Append -Encoding utf8 -FilePath ${log} }`,
   ].join("; ");
   const encoded = Buffer.from(script, "utf16le").toString("base64");
   const command = `powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand ${encoded}`;
   const launcher = [
     "$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }",
     `$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ${psQuote(command)}; ProcessStartupInformation = $si }`,
+    "Write-Output $r.ProcessId",
     "exit $r.ReturnValue",
   ].join("; ");
   const proc = Bun.spawn(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", launcher], {
     stdin: "ignore", stdout: "pipe", stderr: "pipe", windowsHide: true, env: childEnv(),
   });
-  const [code, err] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+  const [code, out, err] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
   if (code !== 0) throw new Error(`Windows didn't start the installer (${code}): ${err.trim().slice(0, 200)}`);
+  console.log(`[update] Windows started the installer (pid ${out.trim()})`);
 }
 
 /** Install the latest release now, logging to update.log; Floe restarts on the new version. */

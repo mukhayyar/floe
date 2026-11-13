@@ -152,6 +152,7 @@ jobs:
           Write-Host "--- update.log"; Get-Content "$P\logs\update.log" -ErrorAction SilentlyContinue
           Write-Host "--- proxy.log"; Get-Content "$P\logs\proxy.log" -Tail 20 -ErrorAction SilentlyContinue
           Get-Process floe, bun -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, Path
+          Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" | Format-Table ProcessId, ParentProcessId, CreationDate, @{ n = "cmd"; e = { $_.CommandLine.Substring(0, [Math]::Min(120, $_.CommandLine.Length)) } } -AutoSize
           if (-not $done) { throw "the update didn't finish" }
 
       - uses: actions/upload-artifact@v4
