@@ -5,6 +5,7 @@ import { type AgentKind, agentLabel, byCatalog, kind } from "./agents";
 import { autoChoice, parseScreen, type ScreenView } from "./menu";
 import { prefs } from "./prefs";
 import { LOCAL, OrcaError, OrcaRpc } from "./orca-rpc";
+import { THIS_MACHINE, openOrca } from "./platform";
 
 export type Mood = "offline" | "idle" | "working" | "attention" | "done";
 
@@ -258,7 +259,7 @@ export class OrcaWatcher {
   }
 
   private hostName(runtime: string): string {
-    return runtime === LOCAL ? "This Mac" : this.environments.find((e) => e.id === runtime)?.name ?? runtime;
+    return runtime === LOCAL ? THIS_MACHINE : this.environments.find((e) => e.id === runtime)?.name ?? runtime;
   }
 
   private track(id: string, a: any, now: number): Step[] {
@@ -420,7 +421,7 @@ export class OrcaWatcher {
         for (const p of plist) p.workspaces.sort((a, b) => Number(b.isMain) - Number(a.isMain) || b.agentIds.length - a.agentIds.length || a.name.localeCompare(b.name));
         hosts.push({
           id: hid,
-          name: hid === LOCAL ? "This Mac" : ssh ? ssh.name : this.hostName(runtime),
+          name: hid === LOCAL ? THIS_MACHINE : ssh ? ssh.name : this.hostName(runtime),
           kind: hid === LOCAL ? "local" : ssh || runtime === LOCAL ? "ssh" : "environment",
           via: runtime,
           online: ssh ? ssh.connected : !!st?.online,
@@ -807,7 +808,7 @@ export class OrcaWatcher {
   async focus(id: string) {
     const { runtime, handle } = await this.terminalFor(id);
     await this.rpc.cli(runtime, ["terminal", "switch", "--terminal", handle]);
-    Bun.spawn(["/usr/bin/open", "-a", "Orca"]);
+    openOrca(this.cfg.orcaUserData, this.cfg.orcaApp);
   }
 
   /** Start an agent in any workspace on any host. `workspaceKey` is `${runtime}|${worktreeId}`. */
@@ -861,7 +862,7 @@ export class OrcaWatcher {
   async terminalFocus(id: string) {
     const { runtime, key: handle } = this.route(id);
     await this.rpc.cli(runtime, ["terminal", "switch", "--terminal", handle]);
-    Bun.spawn(["/usr/bin/open", "-a", "Orca"]);
+    openOrca(this.cfg.orcaUserData, this.cfg.orcaApp);
   }
 
   async newTerminal(workspaceKey: string, command?: string): Promise<string | null> {
@@ -879,6 +880,6 @@ export class OrcaWatcher {
     const res = await this.rpc.call<any>(runtime, "terminal.list", { worktree: `id:${worktreeId}` });
     const t = res.terminals?.[0];
     if (t) await this.rpc.cli(runtime, ["terminal", "switch", "--terminal", t.handle]).catch(() => {});
-    Bun.spawn(["/usr/bin/open", "-a", "Orca"]);
+    openOrca(this.cfg.orcaUserData, this.cfg.orcaApp);
   }
 }

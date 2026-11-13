@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16202e"/>
+      <stop offset="1" stop-color="#05070b"/>
+    </linearGradient>
+    <linearGradient id="fin" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f4f8ff"/>
+      <stop offset="1" stop-color="#b9cbe6"/>
+    </linearGradient>
+    <linearGradient id="sea" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#66adff" stop-opacity="0.15"/>
+      <stop offset="0.5" stop-color="#66adff" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#66adff" stop-opacity="0.15"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="6"/>
+  <!-- the orca fin, as in Floe's idle glyph -->
+  <path d="M 300 700 C 470 620, 460 360, 590 250 C 580 430, 630 580, 740 700 Z" fill="url(#fin)"/>
+  <!-- the sea -->
+  <path d="M 190 712 C 270 680, 330 744, 410 712 S 550 680, 630 712 S 770 744, 834 712" fill="none" stroke="url(#sea)" stroke-width="30" stroke-linecap="round"/>
+  <path d="M 260 800 C 330 776, 390 824, 460 800 S 590 776, 660 800 S 740 816, 764 806" fill="none" stroke="#66adff" stroke-opacity="0.35" stroke-width="18" stroke-linecap="round"/>
+</svg>

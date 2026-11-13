@@ -48,7 +48,7 @@ export class DemoWatcher {
   private t0 = Date.now();
   private tick = 0;
   private answeredAt = 0;
-  private answer = "";
+  private answerText = "";
 
   subscribe(fn: Listener) {
     this.listeners.add(fn);
@@ -103,7 +103,7 @@ export class DemoWatcher {
           ] }
       : { state: "working", title: "Rate-limit the public API", tool: "Edit", detail: "src/middleware/rateLimit.ts", since: this.answeredAt,
           steps: [
-            { kind: "say", tool: null, text: `Going with: ${this.answer}`, at: this.answeredAt, done: true },
+            { kind: "say", tool: null, text: `Going with: ${this.answerText}`, at: this.answeredAt, done: true },
             { kind: "tool", tool: "Edit", text: "src/middleware/rateLimit.ts", at: this.answeredAt + 2000, done: false },
           ] }));
 
@@ -173,7 +173,7 @@ export class DemoWatcher {
 
   async answer(id: string, body: { option?: number; text?: string }): Promise<string> {
     this.answeredAt = Date.now();
-    this.answer = body.text ?? OPTIONS[(body.option ?? 1) - 1] ?? "your answer";
+    this.answerText = body.text ?? OPTIONS[(body.option ?? 1) - 1] ?? "your answer";
     this.build();
     return "sent";
   }

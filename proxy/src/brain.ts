@@ -5,6 +5,11 @@
 
 import { childEnv, loadState, saveState, type ChatMessage, type Config, type State } from "./config";
 import type { OrcaWatcher, Snapshot } from "./orca";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
+import { IS_MAC, IS_WIN, dirs, openOrca, orcaCli } from "./platform";
+
+const MACHINE = IS_MAC ? "Mac" : "computer";
 
 export type BrainEvent =
   | { type: "start"; sessionId: string | null }
@@ -13,11 +18,11 @@ export type BrainEvent =
   | { type: "done"; sessionId: string | null; text: string; costUsd: number | null; durationMs: number | null }
   | { type: "error"; message: string };
 
-const SYSTEM = (repos: string, hosts: string) => `You are Floe: the voice of the user's Orca (the Stably AI agent IDE), shown in a small Dynamic-Island overlay at the top of their Mac screen. They may be mid-game, glancing at you between fights.
+const SYSTEM = (repos: string, hosts: string) => `You are Floe: the voice of the user's Orca (the Stably AI agent IDE), shown in a small Dynamic-Island overlay at the top of their screen. They may be mid-game, glancing at you between fights.
 
 Style: answer in 1-4 short sentences or a tight list. Plain text only: no markdown headings, tables or code fences (it renders in a tiny panel). Lead with the answer. Don't ask clarifying questions unless you truly cannot act.
 
-Orca spans several hosts: this Mac, paired Orca servers (other machines running Orca), and SSH targets that this Mac's Orca drives. Each host has its own projects, workspaces (worktrees), terminals and coding agents. You drive all of it through the \`orca\` CLI. Always pass --json. For a paired Orca server add --environment "<host id>" to every command; for this Mac and its SSH targets add nothing. Terminal handles and worktree ids belong to the host that issued them.
+Orca spans several hosts: this ${MACHINE}, paired Orca servers (other machines running Orca), and SSH targets that this ${MACHINE}'s Orca drives. Each host has its own projects, workspaces (worktrees), terminals and coding agents. You drive all of it through the \`orca\` CLI. Always pass --json. For a paired Orca server add --environment "<host id>" to every command; for this ${MACHINE} and its SSH targets add nothing. Terminal handles and worktree ids belong to the host that issued them.
 
 Each user message starts with an <orca_live> block: the live state of every agent on every host right now, with its host, workspace id and current tool. Trust it for "what's going on" questions.
 
@@ -33,12 +38,12 @@ Useful commands:
 You are not inside an Orca terminal: never use the active/current selectors, always use explicit id: selectors.
 Never remove worktrees, close terminals, interrupt agents, discard changes or push code unless the user explicitly asks in this conversation.
 
-You can read this Mac's repos directly with Read/Grep/Glob, and run read-only git as \`git -C <repo path> log|status|diff|show|branch …\`. Remote hosts' files are only reachable through their Orca terminals. Anything outside your allowed tools is denied automatically because nobody is at the keyboard to approve it: if you hit a denial, say what you would have run and suggest doing it from Orca. Never ask the user to approve a tool.
+You can read this ${MACHINE}'s repos directly with Read/Grep/Glob, and run read-only git as \`git -C <repo path> log|status|diff|show|branch …\`. Remote hosts' files are only reachable through their Orca terminals. Anything outside your allowed tools is denied automatically because nobody is at the keyboard to approve it: if you hit a denial, say what you would have run and suggest doing it from Orca. Never ask the user to approve a tool.
 
 Hosts (name, kind, host id for --environment):
 ${hosts}
 
-This Mac's repos (name, repoId, path):
+This ${MACHINE}'s repos (name, repoId, path):
 ${repos}`;
 
 function liveBlock(s: Snapshot): string {
@@ -77,7 +82,7 @@ export class Brain {
 
   private async prepare() {
     const hostLines = this.orca.snapshot.hosts
-      .map((h) => `- ${h.name} | ${h.kind}${h.online ? "" : " (offline)"} | ${h.kind === "environment" ? h.via : "(none: this Mac's runtime)"}`)
+      .map((h) => `- ${h.name} | ${h.kind}${h.online ? "" : " (offline)"} | ${h.kind === "environment" ? h.via : `(none: this ${MACHINE}'s runtime)`}`)
       .join("\n");
     try {
       const res = await this.orca.rpc.call<any>("local", "repo.list", {});
@@ -117,7 +122,7 @@ export class Brain {
       "--allowedTools", ...this.cfg.allowedTools,
       ...(resume ? ["--resume", resume] : []),
     ];
-    const proc = Bun.spawn(args, { cwd: this.cfg.brainDir, stdin: "pipe", stdout: "pipe", stderr: "pipe", env: childEnv() });
+    const proc = Bun.spawn(args, { cwd: this.cfg.brainDir, stdin: "pipe", stdout: "pipe", stderr: "pipe", env: brainEnv(this.cfg), windowsHide: true });
     this.proc = proc;
     proc.stdin.write(`${liveBlock(this.orca.snapshot)}\n\n${text}`);
     proc.stdin.end();
@@ -208,11 +213,40 @@ export class Brain {
       .find((w) => w.path === this.cfg.brainDir);
     if (!ws) throw new Error(`Add ${this.cfg.brainDir} to Orca first (orca repo add --path … --kind folder)`);
     const res = await this.orca.rpc.cli<any>("local", [
-      "terminal", "create", "--worktree", `id:${ws.worktreeId}`, "--title", "Floe chat", "--command", `${this.cfg.claudeBin} --resume ${sid}`,
+      "terminal", "create", "--worktree", `id:${ws.worktreeId}`, "--title", "Floe chat", "--command", `${shellPath(this.cfg.claudeBin)} --resume ${sid}`,
     ]);
     const handle = res.terminal?.handle ?? res.handle;
     if (handle) await this.orca.rpc.cli("local", ["terminal", "switch", "--terminal", handle]).catch(() => {});
-    Bun.spawn(["/usr/bin/open", "-a", "Orca"]);
+    openOrca(this.cfg.orcaUserData, this.cfg.orcaApp);
     return handle ?? "opened";
   }
+}
+
+/** A program path as the host's shell needs it (PowerShell runs a quoted path with `&`). */
+function shellPath(p: string): string {
+  if (!/\s/.test(p)) return p;
+  return IS_WIN ? `& "${p}"` : `'${p.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * The brain runs `orca …`. On Linux a bare `orca` is the GNOME screen reader and Orca's own CLI
+ * (`orca-ide`) is often only inside its AppImage, whose mount moves every launch; on Windows it may
+ * not be on PATH. So an `orca` that runs this Orca's real CLI goes first on the brain's PATH,
+ * rewritten for every ask.
+ */
+export function brainEnv(cfg: Config): Record<string, string> {
+  const env = childEnv();
+  if (IS_MAC) return env;
+  try {
+    const cli = orcaCli(cfg.orcaUserData, cfg.orcaApp, cfg.orcaBin);
+    const bin = join(dirs.cache, "brain-bin");
+    mkdirSync(bin, { recursive: true });
+    // sh for Linux and for Claude Code's Git Bash on Windows; .cmd for cmd and PowerShell
+    writeFileSync(join(bin, "orca"), `#!/bin/sh\nexec "${cli.replace(/\\/g, "/")}" "$@"\n`);
+    chmodSync(join(bin, "orca"), 0o755);
+    if (IS_WIN) writeFileSync(join(bin, "orca.cmd"), `@"${cli}" %*\r\n`);
+    const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+    env[key] = bin + delimiter + (env[key] ?? "");
+  } catch {}
+  return env;
 }

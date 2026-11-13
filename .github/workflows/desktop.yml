@@ -1,0 +1,118 @@
+# Floe for Linux and Windows (desktop/, a Tauri app). Run it by hand to get the builds as
+# workflow artifacts; on a v* tag it also attaches them to that release (creating a draft
+# release if there isn't one yet; the macOS Floe.app zip is added from a Mac).
+name: desktop
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: linux-x86_64
+            bundles: appimage,deb
+          - os: ubuntu-22.04-arm
+            name: linux-aarch64
+            bundles: appimage,deb
+          - os: windows-latest
+            name: windows-x64
+            bundles: nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      - name: Linux libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf file
+
+      - name: Build
+        working-directory: desktop
+        run: |
+          bun install --frozen-lockfile
+          bun x tauri build --bundles ${{ matrix.bundles }}
+
+      - name: Collect (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p out
+          B=desktop/src-tauri/target/release
+          cp "$(ls $B/bundle/appimage/*.AppImage | head -1)" "out/Floe-${{ matrix.name }}.AppImage"
+          DEB_ARCH=$([ "${{ matrix.name }}" = linux-x86_64 ] && echo amd64 || echo arm64)
+          cp "$(ls $B/bundle/deb/*.deb | head -1)" "out/Floe-linux-$DEB_ARCH.deb"
+          ls -la out
+
+      - name: Collect (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          $B = "desktop/src-tauri/target/release"
+          Copy-Item "$B/floe.exe" "out/Floe-${{ matrix.name }}.exe"
+          Copy-Item (Get-ChildItem "$B/bundle/nsis/*-setup.exe" | Select-Object -First 1).FullName "out/Floe-${{ matrix.name }}-setup.exe"
+          Get-ChildItem out
+
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y xvfb
+          chmod +x out/*.AppImage
+          # it should start, stay up and draw a window under a virtual display
+          APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a out/Floe-${{ matrix.name }}.AppImage > app.log 2>&1 &
+          PID=$!
+          sleep 15
+          if kill -0 $PID 2>/dev/null; then echo "running"; else cat app.log; exit 1; fi
+          tail -20 app.log
+          kill $PID || true
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $p = Start-Process -PassThru -FilePath "out/Floe-${{ matrix.name }}.exe"
+          Start-Sleep -Seconds 15
+          if ($p.HasExited) { throw "Floe exited with $($p.ExitCode)" }
+          Write-Host "running"
+          Stop-Process -Id $p.Id -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: floe-${{ matrix.name }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Attach to the release
+        run: |
+          ls -la out
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --draft --title "Floe ${TAG#v}" --notes "Building…"
+          gh release upload "$TAG" out/* -R "$GITHUB_REPOSITORY" --clobber

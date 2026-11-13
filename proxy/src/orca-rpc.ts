@@ -1,6 +1,6 @@
 // Transport to Orca, local and remote.
 //
-// Local reads: the unix socket named in orca-runtime.json (~2ms). The `orca` CLI boots
+// Local reads: the unix socket (Windows: named pipe) named in orca-runtime.json (~2ms). The `orca` CLI boots
 // Electron for every call (~0.3s CPU), too heavy to poll while a game is running.
 // Remote reads (paired Orca servers): one long-lived orca-bridge.cjs process that reuses
 // the CLI's own RuntimeClient (~20ms CPU per call).
@@ -11,6 +11,7 @@ import { readFileSync } from "node:fs";
 import { connect } from "node:net";
 import { join, resolve } from "node:path";
 import { childEnv, type Config } from "./config";
+import { IS_WIN, orcaCli, orcaElectron } from "./platform";
 
 export class OrcaError extends Error {
   constructor(message: string, public code = "orca_error") {
@@ -40,9 +41,9 @@ export class OrcaRpc {
     } catch {
       throw new OrcaError("Orca is not running", "runtime_unavailable");
     }
-    const unix = raw?.transports?.find((t: any) => t.kind === "unix");
-    if (!unix?.endpoint || !raw.authToken) throw new OrcaError("Orca runtime metadata incomplete", "runtime_unavailable");
-    return { authToken: raw.authToken, endpoint: unix.endpoint };
+    const local = raw?.transports?.find((t: any) => t.kind === (IS_WIN ? "named-pipe" : "unix"));
+    if (!local?.endpoint || !raw.authToken) throw new OrcaError("Orca runtime metadata incomplete", "runtime_unavailable");
+    return { authToken: raw.authToken, endpoint: local.endpoint };
   }
 
   private local<T>(method: string, params: unknown, timeoutMs: number): Promise<T> {
@@ -94,12 +95,15 @@ export class OrcaRpc {
   private ensureBridge() {
     if (this.bridge && this.bridge.exitCode === null) return this.bridge;
     const script = resolve(import.meta.dir, "..", "orca-bridge.cjs");
-    const electron = join(this.cfg.orcaApp, "Contents", "MacOS", "Orca");
+    const electron = orcaElectron(this.cfg.orcaUserData, this.cfg.orcaApp);
+    if (!electron) throw new OrcaError("Orca isn't installed", "runtime_unavailable");
+    // orca-bridge.cjs finds Orca's code next to the Electron binary it runs under
     const proc = Bun.spawn([electron, script], {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "ignore",
-      env: { ...childEnv(), ELECTRON_RUN_AS_NODE: "1", ORCA_APP_OUT: join(this.cfg.orcaApp, "Contents", "Resources", "app.asar.unpacked", "out") },
+      env: { ...childEnv(), ELECTRON_RUN_AS_NODE: "1" },
+      windowsHide: true,
     });
     this.bridge = proc;
     (async () => {
@@ -156,7 +160,8 @@ export class OrcaRpc {
   /** Run the official CLI against a host (writes and anything without a stable RPC shape). */
   async cli<T = any>(host: string, args: string[], timeoutMs = 30000): Promise<T> {
     const full = host === LOCAL ? args : [...args, "--environment", host];
-    const proc = Bun.spawn([this.cfg.orcaBin, ...full, "--json"], { stdout: "pipe", stderr: "pipe", stdin: "ignore", env: childEnv() });
+    const bin = orcaCli(this.cfg.orcaUserData, this.cfg.orcaApp, this.cfg.orcaBin);
+    const proc = Bun.spawn([bin, ...full, "--json"], { stdout: "pipe", stderr: "pipe", stdin: "ignore", env: childEnv(), windowsHide: true });
     const timer = setTimeout(() => proc.kill(), timeoutMs);
     const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     await proc.exited;

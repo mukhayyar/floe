@@ -1,13 +1,19 @@
 // Long-lived bridge to remote Orca servers (paired "environments"), run under Orca's own
 // Electron in node mode so it uses the exact runtime client the `orca` CLI ships:
 //   ELECTRON_RUN_AS_NODE=1 /Applications/Orca.app/Contents/MacOS/Orca orca-bridge.cjs
+//   ELECTRON_RUN_AS_NODE=1 /opt/Orca/orca-ide orca-bridge.cjs          (Linux; or inside an AppImage mount)
+//   ELECTRON_RUN_AS_NODE=1 %LOCALAPPDATA%\Programs\Orca\Orca.exe orca-bridge.cjs   (Windows)
 // Spawning the CLI per poll costs ~330ms CPU; reusing a client costs ~20ms.
 //
 // Protocol: JSON lines on stdin  {id, env, method, params}
 //                     on stdout {id, ok, result} | {id, ok:false, error:{code,message}}
 
-const out = process.env.ORCA_APP_OUT || "/Applications/Orca.app/Contents/Resources/app.asar.unpacked/out";
-const { RuntimeClient } = require(out + "/cli/runtime-client.js");
+const path = require("node:path");
+// Orca's code sits next to the Electron binary this runs under.
+const exeDir = path.dirname(process.execPath);
+const resources = process.platform === "darwin" ? path.join(exeDir, "..", "Resources") : path.join(exeDir, "resources");
+const out = process.env.ORCA_APP_OUT || path.join(resources, "app.asar.unpacked", "out");
+const { RuntimeClient } = require(path.join(out, "cli", "runtime-client.js"));
 
 const clients = new Map();
 
