@@ -20,6 +20,8 @@ struct Agent: Codable, Identifiable, Equatable {
     let project: String
     let path: String
     let agentType: String
+    /// The harness's proper name ("Codex", "OMP"); older proxies don't send it.
+    let agentLabel: String?
     let state: String
     let title: String
     let tool: String?
@@ -31,6 +33,7 @@ struct Agent: Codable, Identifiable, Equatable {
     let updatedAt: Double
     let steps: [Step]
 
+    var kindName: String { agentLabel ?? agentType }
     var isRemote: Bool { !id.hasPrefix("local|") }
     var place: String { isRemote ? "\(hostName) · \(workspace)" : workspace }
 }
@@ -71,6 +74,14 @@ struct HostCounts: Codable, Equatable {
     let agents: Int
 }
 
+/// An agent harness Orca can start (Claude, Codex, OMP, Gemini…).
+struct AgentKind: Codable, Equatable, Hashable, Identifiable {
+    let id: String
+    let label: String
+
+    static let fallback = [AgentKind(id: "claude", label: "Claude"), AgentKind(id: "codex", label: "Codex")]
+}
+
 struct HostView: Codable, Equatable, Identifiable {
     let id: String
     let name: String
@@ -80,6 +91,10 @@ struct HostView: Codable, Equatable, Identifiable {
     let error: String?
     let projects: [ProjectView]
     let counts: HostCounts
+    /// Harnesses installed on this host, your Orca default first (empty until Orca has checked).
+    let agents: [AgentKind]?
+
+    var launchable: [AgentKind] { (agents ?? []).isEmpty ? AgentKind.fallback : agents! }
 }
 
 struct Snapshot: Codable, Equatable {
@@ -167,6 +182,7 @@ struct TerminalInfo: Codable, Identifiable, Equatable {
     let id: String
     let title: String
     let agentType: String?
+    let agentLabel: String?
     let agentId: String?
     let preview: String?
     let lastOutputAt: Double?

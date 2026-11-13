@@ -262,8 +262,7 @@ struct WorkspaceCard: View {
                 ActionButton(title: "Terminals", symbol: "terminal", prominent: true) {
                     store.push(.workspace(host.id, project.key, workspace.key))
                 }
-                ActionButton(title: "Claude", symbol: "plus") { store.beginLaunch(workspace, project: project.name, host: host, agent: "claude") }
-                ActionButton(title: "Codex", symbol: "plus") { store.beginLaunch(workspace, project: project.name, host: host, agent: "codex") }
+                LaunchControl(ws: workspace, project: project.name, host: host)
             }
         }
         .padding(11)
@@ -299,8 +298,7 @@ struct WorkspaceDetail: View {
                     HStack(spacing: 6) {
                         ActionButton(title: "Open in Orca", symbol: "arrow.up.forward.app") { store.focusWorkspace(ws) }
                         ActionButton(title: "New terminal", symbol: "plus.rectangle") { store.newTerminal(ws) }
-                        ActionButton(title: "Claude", symbol: "plus") { store.beginLaunch(ws, project: project.name, host: host, agent: "claude") }
-                        ActionButton(title: "Codex", symbol: "plus") { store.beginLaunch(ws, project: project.name, host: host, agent: "codex") }
+                        LaunchControl(ws: ws, project: project.name, host: host)
                     }
 
                     if !agents.isEmpty {
@@ -351,7 +349,7 @@ struct TerminalRow: View {
                     .frame(width: 16)
                 Text(terminal.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
                 if terminal.main { Tag(text: "main") }
-                if let a = terminal.agentType { Tag(text: a) }
+                if let a = terminal.agentType { Tag(text: terminal.agentLabel ?? a) }
                 Spacer(minLength: 4)
                 if let t = terminal.lastOutputAt { Text(ago(t)).font(.system(size: 10)).foregroundStyle(Color.dim) }
             }
@@ -417,6 +415,43 @@ struct ActionButton: View {
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Start an agent in a workspace: the host's Orca default as a button, every other harness
+/// installed there (Codex, OMP, Gemini, OpenCode…) in the menu beside it.
+struct LaunchControl: View {
+    @EnvironmentObject var store: IslandStore
+    let ws: WorkspaceView
+    let project: String
+    let host: HostView
+
+    var body: some View {
+        let kinds = host.launchable
+        HStack(spacing: 3) {
+            ActionButton(title: kinds[0].label, symbol: "plus") { store.beginLaunch(ws, project: project, host: host, agent: kinds[0].id) }
+            if kinds.count > 1 {
+                Menu {
+                    Section("Start an agent on \(host.name)") {
+                        ForEach(kinds) { k in
+                            Button(k.label) { store.beginLaunch(ws, project: project, host: host, agent: k.id) }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.85))
+                        .frame(width: 22, height: 24)
+                        .background(Capsule().fill(Color.white.opacity(0.09)))
+                        .contentShape(Capsule())
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("More agents: \(kinds.dropFirst().map(\.label).joined(separator: ", "))")
+            }
+        }
     }
 }
 

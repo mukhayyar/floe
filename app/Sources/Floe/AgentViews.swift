@@ -47,7 +47,7 @@ struct AgentCard: View {
                     }
                     Text(agent.workspace).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 }
-                Text(agent.agentType).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Color.dim)
+                Text(agent.kindName).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Color.dim)
                 Spacer(minLength: 4)
                     .contentShape(Rectangle())
                     .onTapGesture { store.select(agent: agent) }

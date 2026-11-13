@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config";
+import { type AgentKind, agentLabel, byCatalog, kind } from "./agents";
 import { autoChoice, parseScreen, type ScreenView } from "./menu";
 import { prefs } from "./prefs";
 import { LOCAL, OrcaError, OrcaRpc } from "./orca-rpc";
@@ -27,6 +28,8 @@ export interface IslandAgent {
   project: string;
   path: string;
   agentType: string;
+  /** The harness's proper name: "Codex", "OMP", "Gemini"… */
+  agentLabel: string;
   state: string; // working | waiting | done | idle
   title: string;
   tool: string | null;
@@ -68,6 +71,8 @@ export interface HostView {
   error: string | null;
   projects: ProjectView[];
   counts: { working: number; attention: number; workspaces: number; agents: number };
+  /** Harnesses installed on this host that Floe can start, your Orca default first. */
+  agents: AgentKind[];
 }
 
 export interface Snapshot {
@@ -165,6 +170,9 @@ export class OrcaWatcher {
   private screens = new Map<string, { view: ScreenView & { handle: string }; at: number }>();
   /** Agents waiting on a prompt while auto-deliver is on. */
   private autos = new Map<string, Auto>();
+  /** host id → the harnesses it has installed (Orca's preflight), your Orca default first. */
+  private launchable = new Map<string, { agents: string[]; at: number }>();
+  private detecting = new Set<string>();
 
   constructor(private cfg: Config) {
     this.rpc = new OrcaRpc(cfg);
@@ -322,6 +330,7 @@ export class OrcaWatcher {
       project: w.repo,
       path: w.path,
       agentType: a.agentType ?? "agent",
+      agentLabel: agentLabel(a.agentType),
       state: attention ? "waiting" : a.state ?? "idle",
       title: clip(a.conversationName ?? a.taskTitle ?? a.displayName ?? firstLine(a.prompt) ?? a.agentType, 80)!,
       tool: live ? (a.toolName ?? null) : null,
@@ -405,7 +414,9 @@ export class OrcaWatcher {
           error: ssh ? (ssh.connected ? null : "disconnected") : st?.error ?? (st ? null : "connecting"),
           projects: plist,
           counts: { working, attention, workspaces: rows.length, agents: agentCount },
+          agents: (this.launchable.get(hid)?.agents ?? []).map(kind),
         });
+        if (ssh ? ssh.connected : st?.online) this.detectAgents(hid, runtime);
       }
     }
     for (const id of [...this.trails.keys()]) if (!seen.has(id)) this.trails.delete(id);
@@ -494,6 +505,33 @@ export class OrcaWatcher {
       try {
         fn(ev);
       } catch {}
+    }
+  }
+
+  /**
+   * Which harnesses a host can start: Orca's own detection (which CLIs are on that machine's
+   * PATH), minus the ones you turned off in Orca, with your Orca default first. Checked every
+   * 10 minutes per host.
+   */
+  private async detectAgents(hostId: string, runtime: string) {
+    const known = this.launchable.get(hostId);
+    if (this.detecting.has(hostId) || (known && Date.now() - known.at < 10 * 60_000)) return;
+    this.detecting.add(hostId);
+    try {
+      const ssh = runtime === LOCAL && hostId !== LOCAL;
+      const found = await this.rpc.call<any>(runtime, ssh ? "preflight.detectRemoteAgents" : "preflight.detectAgents", ssh ? { connectionId: hostId } : {});
+      const ids: string[] = (Array.isArray(found) ? found : found?.agents ?? []).filter((x: unknown) => typeof x === "string");
+      const launch = await this.rpc.call<any>(runtime, "settings.getAgentLaunch", {}).catch(() => null);
+      const off = new Set<string>(launch?.settings?.disabledTuiAgents ?? []);
+      const agents = [...new Set(ids)].filter((id) => !off.has(id)).sort(byCatalog);
+      const preferred = launch?.settings?.defaultTuiAgent;
+      if (preferred && agents.includes(preferred)) agents.unshift(...agents.splice(agents.indexOf(preferred), 1));
+      this.launchable.set(hostId, { agents, at: Date.now() });
+      this.rebuild();
+    } catch {
+      this.launchable.set(hostId, { agents: known?.agents ?? [], at: Date.now() - 8 * 60_000 }); // try again in ~2 min
+    } finally {
+      this.detecting.delete(hostId);
     }
   }
 
@@ -735,6 +773,7 @@ export class OrcaWatcher {
         id: `${runtime}|${t.handle}`,
         title: t.paneTitle || t.title || `Terminal ${i + 1}`,
         agentType: t.agentIdentity ?? null,
+        agentLabel: t.agentIdentity ? agentLabel(t.agentIdentity) : null,
         agentId,
         preview: clip(oneLine(String(t.preview ?? "")), 160),
         lastOutputAt: t.lastOutputAt ?? null,

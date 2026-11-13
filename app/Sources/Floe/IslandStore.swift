@@ -211,6 +211,18 @@ final class IslandStore: ObservableObject {
         return nil
     }
 
+    /// "codex" → "Codex", from what the hosts report.
+    func agentName(_ id: String) -> String {
+        for h in hosts { if let k = h.agents?.first(where: { $0.id == id }) { return k.label } }
+        return agents.first { $0.agentType == id }?.agentLabel ?? id.prefix(1).uppercased() + id.dropFirst()
+    }
+
+    /// What starts when you send a task to a workspace with no agent: that host's Orca default.
+    func defaultKind(inWorkspace key: String) -> AgentKind {
+        let host = hosts.first { $0.projects.contains { $0.workspaces.contains { $0.key == key } } }
+        return host?.launchable.first ?? AgentKind.fallback[0]
+    }
+
     func beginLaunch(_ ws: WorkspaceView, project: String, host: HostView, agent: String) {
         let label = host.kind == "local" ? "\(project)/\(ws.name)" : "\(project)/\(ws.name) on \(host.name)"
         target = .launch(ws.key, agent, label)
@@ -451,13 +463,14 @@ final class IslandStore: ObservableObject {
                 if let agent = bestAgent(inWorkspace: key) {
                     let r = await post("agents/\(path(agent.id))/answer", ["text": text])
                     sending = false
-                    say(r.ok ? "Sent to \(agent.agentType) in \(label)" : r.message)
+                    say(r.ok ? "Sent to \(agent.kindName) in \(label)" : r.message)
                     try? await Task.sleep(nanoseconds: 700_000_000)
                     await fetchScreen(agent.id)
                 } else {
-                    let r = await post("workspaces/\(path(key))/launch", ["agent": "claude", "prompt": text])
+                    let kind = defaultKind(inWorkspace: key)
+                    let r = await post("workspaces/\(path(key))/launch", ["agent": kind.id, "prompt": text])
                     sending = false
-                    say(r.ok ? "Started Claude in \(label)" : r.message)
+                    say(r.ok ? "Started \(kind.label) in \(label)" : r.message)
                 }
             }
         case .launch(let key, let agentType, let label):
@@ -465,7 +478,7 @@ final class IslandStore: ObservableObject {
             Task {
                 let r = await post("workspaces/\(path(key))/launch", ["agent": agentType, "prompt": text])
                 sending = false
-                say(r.ok ? "Started \(agentType) in \(label)" : r.message)
+                say(r.ok ? "Started \(agentName(agentType)) in \(label)" : r.message)
                 if r.ok {
                     if tab == .hosts, !hostNav.isEmpty {
                         followNav()

@@ -5,14 +5,15 @@
 
 import type { Activity, HostView, IslandAgent, Snapshot, Step } from "./orca";
 import type { ScreenView } from "./menu";
+import { agentLabel, kind } from "./agents";
 
 type Listener = (ev: { type: "snapshot"; data: Snapshot } | { type: "activity"; data: Activity }) => void;
 
 const HOSTS = [
-  { id: "local", name: "Studio Mac", kind: "local" as const, online: true },
-  { id: "demo-build", name: "Build Server", kind: "environment" as const, online: true },
-  { id: "demo-gpu", name: "GPU Rig", kind: "environment" as const, online: true },
-  { id: "demo-pi", name: "Pi Cluster", kind: "ssh" as const, online: false },
+  { id: "local", name: "Studio Mac", kind: "local" as const, online: true, agents: ["claude", "codex", "omp", "gemini", "opencode"] },
+  { id: "demo-build", name: "Build Server", kind: "environment" as const, online: true, agents: ["codex", "claude", "pi"] },
+  { id: "demo-gpu", name: "GPU Rig", kind: "environment" as const, online: true, agents: ["codex", "gemini"] },
+  { id: "demo-pi", name: "Pi Cluster", kind: "ssh" as const, online: false, agents: [] as string[] },
 ];
 
 const PROJECTS: Record<string, [string, string[]][]> = {
@@ -77,7 +78,7 @@ export class DemoWatcher {
         id: `${hostId}|pane-${project}-${ws}`, paneKey: `pane-${project}-${ws}`, hostId, hostName: host.name,
         worktreeId: `wt-${project}-${ws}`, workspaceKey: key, workspace: ws, project, path: `~/code/${project}`,
         agentType: "claude", state: "idle", title: "", tool: null, detail: null, attention: null, progress: null,
-        lastMessage: null, since: this.t0, updatedAt: now, steps: [], ...a,
+        lastMessage: null, since: this.t0, updatedAt: now, steps: [], ...a, agentLabel: agentLabel(a.agentType ?? "claude"),
       };
     };
 
@@ -139,6 +140,7 @@ export class DemoWatcher {
           working: mine.filter((a) => a.state === "working").length, attention: mine.filter((a) => a.attention).length,
           workspaces: (PROJECTS[h.id] ?? []).reduce((s, [, w]) => s + w.length, 0), agents: mine.length,
         },
+        agents: h.agents.map(kind),
       };
     });
     const att = agents.filter((a) => a.attention);

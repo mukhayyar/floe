@@ -512,16 +512,16 @@ struct InputBar: View {
 
     private var placeholder: String {
         if case .launch(_, let agent, let label) = store.target {
-            return "Task for a new \(agent == "codex" ? "Codex" : "Claude") in \(label)…"
+            return "Task for a new \(store.agentName(agent)) in \(label)…"
         }
         if case .terminal(_, let label) = store.target {
             return "Command to run in \(label)…"
         }
         if case .workspace(let key, let label) = store.target {
             if let a = store.bestAgent(inWorkspace: key) {
-                return a.attention != nil ? "Answer \(a.agentType) in \(label)…" : "Message \(a.agentType) in \(label)…"
+                return a.attention != nil ? "Answer \(a.kindName) in \(label)…" : "Message \(a.kindName) in \(label)…"
             }
-            return "Task for a new Claude in \(label)…"
+            return "Task for a new \(store.defaultKind(inWorkspace: key).label) in \(label)…"
         }
         if let a = store.targetAgent {
             return a.attention != nil ? "Answer \(a.place)…" : "Message \(a.place)…"
