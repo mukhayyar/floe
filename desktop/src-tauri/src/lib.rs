@@ -68,6 +68,14 @@ fn place(win: &WebviewWindow, geo: &Geometry, w: f64, h: f64, center: Option<f64
     let s = screen(win);
     let c = center.unwrap_or_else(|| center_of(geo, &s));
     let x = (c - w / 2.0).clamp(s.x, (s.x + s.w - w).max(s.x));
+    // Linux: a non-resizable GTK window takes the webview's natural size, which is the page, which
+    // fills the window, so it can grow but never shrink. The window is resizable there instead,
+    // with its min and max pinned to the island so the window manager still can't resize it.
+    #[cfg(target_os = "linux")]
+    {
+        let _ = win.set_min_size(Some(LogicalSize::new(w, h)));
+        let _ = win.set_max_size(Some(LogicalSize::new(w, h)));
+    }
     let _ = win.set_size(LogicalSize::new(w, h));
     let _ = win.set_position(LogicalPosition::new(x.round(), s.y));
     if let Ok(mut z) = geo.size.lock() {
@@ -370,7 +378,7 @@ pub fn run() {
                 .decorations(false)
                 .transparent(true)
                 .shadow(false)
-                .resizable(false)
+                .resizable(cfg!(target_os = "linux")) // see place()
                 .maximizable(false)
                 .minimizable(false)
                 .always_on_top(true)
