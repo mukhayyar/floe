@@ -291,9 +291,10 @@ if [[ $FROM_SOURCE == 1 ]]; then
   xcode-select -p >/dev/null 2>&1 || die "Building Floe needs the Xcode Command Line Tools: run  xcode-select --install  and try again."
   say "Building Floe.app (about a minute)"
   (cd "$SRC/app" && swift build -c release >/dev/null)
-  mkdir -p "$TMP/app/Floe.app/Contents/MacOS"
+  mkdir -p "$TMP/app/Floe.app/Contents/MacOS" "$TMP/app/Floe.app/Contents/Resources"
   cp "$SRC/app/.build/release/Floe" "$TMP/app/Floe.app/Contents/MacOS/Floe"
   cp "$SRC/app/Info.plist" "$TMP/app/Floe.app/Contents/Info.plist"
+  [[ -f "$SRC/app/Floe.icns" ]] && cp "$SRC/app/Floe.icns" "$TMP/app/Floe.app/Contents/Resources/Floe.icns"
   codesign --force --sign - "$TMP/app/Floe.app" >/dev/null 2>&1
 fi
 [[ -x "$TMP/app/Floe.app/Contents/MacOS/Floe" ]] || die "Floe.app is missing from the download."

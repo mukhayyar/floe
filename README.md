@@ -1,3 +1,5 @@
+<img src="desktop/assets/icon.png" width="112" align="right" alt="Floe's icon: a pill-shaped ice floe on a night sea, an orca's fin cutting the water in front of it">
+
 # Floe
 
 **A Dynamic-Island overlay for [Orca](https://orca.stably.ai).** Floe sits in your Mac's notch (on Linux and
@@ -262,6 +264,7 @@ git clone https://github.com/mukhayyar/floe && cd floe
 scripts/install.sh      # build Floe.app with Swift, start the proxy and the app at login
 scripts/build.sh        # rebuild the app, then: launchctl kickstart -k gui/$(id -u)/com.mukhayyar.floe
 scripts/uninstall.sh    # stop both and remove the login items
+scripts/icons.sh        # redraw the icon (desktop/assets/icon.mjs) and make every size from it
 ```
 
 Logs are in `~/Library/Logs/Floe/`. Building needs the Xcode Command Line Tools and Bun.
