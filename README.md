@@ -170,17 +170,23 @@ pointer has rested on it, so moving your hero across the top of the screen won't
 
 ## Settings
 
-**Auto-deliver** (Settings tab, off by default) lets Floe answer for you while you're away:
-- It delivers messages that another Claude session sent and Claude held for your approval.
-- It picks the option an agent marked "(Recommended)" when asking a question. After several
-  questions, it submits the answers once all are answered.
-- When a question marks no option as recommended (most do not), it answers "No preference. Go with
-  the option you'd recommend and carry on." The agent then makes the choice itself, with everything
-  it knows about the task. Turn this off with "When nothing is recommended, let the agent choose".
+Two switches in the Settings tab let Floe act for you while you're away. Both are off by default,
+and each works without the other:
+
+- **Deliver messages between agents.** When one Claude session messages another in a different
+  permission mode (bypass and auto, say), Claude holds the message behind Deliver / Deny. Floe
+  delivers it. It watches Claude agents' screens for that prompt itself, because no hook announces
+  it and a paired Orca server doesn't report idle agents' screens.
+- **Answer agents' questions.** Floe picks the option an agent marked "(Recommended)". When an agent
+  asks several questions, Floe submits the answers once all are answered.
+  - When nothing is marked recommended (most questions), it answers "No preference. Go with the
+    option you'd recommend and carry on." The agent then chooses, with everything it knows about
+    the task.
+  - Turn that off with "When nothing is recommended, let the agent choose".
 
 Floe never answers permission prompts, plan approvals, or questions where you can pick more than one.
-You get a short banner each time it answers, and the proxy log says why it left anything to you.
-The proxy does the answering, so it works while Floe is collapsed. It keeps these settings in
+You get a short banner each time it acts, and the proxy log says why it left anything to you.
+The proxy does the work, so it carries on while Floe is collapsed. It keeps these settings in
 `~/.config/floe/prefs.json`.
 
 Floe answers agents that run in a terminal. Agents Floe starts always run in one, whatever Orca's

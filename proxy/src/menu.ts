@@ -256,6 +256,8 @@ export function parseScreen(tail: string[], opts: { unnumbered?: boolean; agent?
 }
 
 const DELIVER = /^deliver this message\b/i;
+/** The option that releases a message another session sent and Claude held for you. */
+export const isDeliver = (label: string) => DELIVER.test(label);
 const RECOMMENDED = /\(recommended\)/i;
 const SUBMIT = /^submit( answers)?$/i;
 const UNANSWERED = /not answered all questions/i;
@@ -291,13 +293,17 @@ export interface AutoPick {
  * - with `letAgentChoose`, a question (never a permission or plan prompt) that recommends nothing:
  *   answer through its free-text option that the agent should go with what it would recommend.
  */
-export function autoChoice(view: Pick<ScreenView, "lines" | "options"> & { multi?: boolean }, opts: { letAgentChoose?: boolean; question?: boolean } = {}): AutoPick | null {
+export function autoChoice(
+  view: Pick<ScreenView, "lines" | "options"> & { multi?: boolean },
+  opts: { deliver?: boolean; answer?: boolean; letAgentChoose?: boolean; question?: boolean } = {},
+): AutoPick | null {
   const { options, lines } = view;
   if (options.length < 2) return null;
   const pickAny = !!view.multi || options.some((o) => o.checked !== undefined || CHECKBOX.test(o.label));
+  const deliver = options.find((o) => DELIVER.test(o.label));
+  if (deliver) return opts.deliver === false || pickAny ? null : { option: deliver, text: "Delivered the held message" };
+  if (opts.answer === false) return null;
   if (!pickAny) {
-    const deliver = options.find((o) => DELIVER.test(o.label));
-    if (deliver) return { option: deliver, text: "Delivered the held message" };
     const rec = options.find((o) => !o.freeText && RECOMMENDED.test(o.label));
     if (rec) return { option: rec, text: `Picked “${rec.label.replace(RECOMMENDED, "").trim()}”` };
     const submit = options.find((o) => SUBMIT.test(o.label));
@@ -313,8 +319,10 @@ export function autoChoice(view: Pick<ScreenView, "lines" | "options"> & { multi
 }
 
 /** Why auto-deliver left a prompt to you, for the log. */
-export function whyNot(view: Pick<ScreenView, "lines" | "options"> & { multi?: boolean }): string {
+export function whyNot(view: Pick<ScreenView, "lines" | "options"> & { multi?: boolean }, opts: { deliver?: boolean; answer?: boolean } = {}): string {
   if (view.options.length < 2) return "no menu on screen";
+  if (view.options.some((o) => DELIVER.test(o.label))) return opts.deliver === false ? "delivering messages automatically is off" : "a held message";
+  if (opts.answer === false) return "answering questions automatically is off";
   if (view.multi || view.options.some((o) => o.checked !== undefined || CHECKBOX.test(o.label))) return "a pick-any question";
   if ([...view.lines, ...view.options.map((o) => o.label)].some((l) => APPROVAL.test(l))) return "a permission or approval prompt";
   if (!view.options.some((o) => o.freeText)) return "no recommended option and no free-text answer";

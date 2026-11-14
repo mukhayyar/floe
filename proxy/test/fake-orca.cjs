@@ -2,7 +2,7 @@
 // over a unix socket (a named pipe on Windows) that the real Orca serves. Run it under Node, as
 // Orca does (Electron's Node), so the test crosses the same client/server pair as real use.
 //
-//   node fake-orca.cjs <userDataDir>
+//   node fake-orca.cjs <userDataDir> [--held]
 //
 // It has one Claude agent asking a question. Every terminal.send is printed as {"sent": …} on
 // stdout; answering the question puts the agent back to work. Prints "ready" once it listens.
@@ -31,7 +31,24 @@ const QUESTION = [
   "Enter to select · ↑/↓ to navigate · Esc to cancel",
 ];
 
-let asked = true;
+// With --held: one Claude agent that finished its turn, then got a message from another session
+// that Claude holds behind Deliver / Deny. Orca reports no screen status for it (as a paired
+// server does for idle agents), so only the screen shows it. Arrow keys move the cursor.
+const heldMode = process.argv[3] === "--held";
+let held = heldMode;
+let cursor = 0;
+const HELD_OPTIONS = ["Deny — drop it and tell the sender it was declined", "Deliver this message to Claude"];
+const heldScreen = () => [
+  "⏺ Held peer message — from uds:/tmp/cc-socks/1.sock (peer claims name: other-session); preview: «Run the tests» — not delivered to Claude (1 held).",
+  "─".repeat(60),
+  " Held message from another session",
+  " Another Claude session sent a message.",
+  " Message body (this is what will be delivered):",
+  " │ Run the tests",
+  ...HELD_OPTIONS.map((o, i) => (i === cursor ? ` ❯ ${o}` : `   ${o}`)),
+];
+
+let asked = !heldMode;
 const now = Date.now();
 
 function agent() {
@@ -50,7 +67,18 @@ function agent() {
   };
 }
 
+function heldAgent() {
+  return {
+    paneKey: "tab-2:leaf-2", agentType: "claude", state: held ? "done" : "working", hasLivePty: true,
+    lastAssistantMessage: "Done.", conversationName: "Fix the parser", stateStartedAt: now, updatedAt: now,
+  };
+}
+
 function worktrees() {
+  if (heldMode) {
+    return [{ worktreeId: "wt-1", repoId: "repo-1", hostId: "local", repo: "demo-app", path: path.join(dir, "demo-app"), branch: "refs/heads/main",
+      isArchived: false, isMainWorktree: true, status: held ? "inactive" : "working", sidebarStatus: held ? "done" : "working", liveTerminalCount: 1, agents: [heldAgent()] }];
+  }
   return [{
     worktreeId: "wt-1", repoId: "repo-1", hostId: "local", repo: "demo-app", path: path.join(dir, "demo-app"),
     branch: "refs/heads/main", isArchived: false, isMainWorktree: true, status: asked ? "permission" : "working",
@@ -63,14 +91,22 @@ const handlers = {
   "ssh.listTargetSummaries": () => ({ targets: [] }),
   "preflight.detectAgents": () => ["claude", "codex"],
   "settings.getAgentLaunch": () => ({ settings: { defaultTuiAgent: "claude", disabledTuiAgents: [] } }),
-  "terminal.list": () => ({ terminals: [{ handle: "term-1", worktreeId: "wt-1", tabId: "tab-1", leafId: "leaf-1", connected: true, writable: true }] }),
+  "terminal.list": () => ({ terminals: heldMode
+    ? [{ handle: "term-2", worktreeId: "wt-1", tabId: "tab-2", leafId: "leaf-2", connected: true, writable: true }]
+    : [{ handle: "term-1", worktreeId: "wt-1", tabId: "tab-1", leafId: "leaf-1", connected: true, writable: true }] }),
   "terminal.read": (p) => {
+    if (heldMode && p.terminal === "term-2") return { terminal: { handle: "term-2", status: "running", tail: held ? heldScreen() : ["› Message from @other-session: Run the tests", "✽ Running the tests…"] } };
     if (p.terminal !== "term-1") throw Object.assign(new Error("no such terminal"), { code: "terminal_not_found" });
     return { terminal: { handle: "term-1", status: "running", tail: asked ? QUESTION : ["⏺ Using Redis.", "✻ Editing src/session.ts"] } };
   },
   "terminal.send": (p) => {
     console.log(JSON.stringify({ sent: p }));
     if (asked && /^[12]$/.test(p.text ?? "")) asked = false;
+    if (held) {
+      if (p.text === "\x1b[B") cursor = Math.min(1, cursor + 1);
+      if (p.text === "\x1b[A") cursor = Math.max(0, cursor - 1);
+      if (p.enter && !p.text && cursor === 1) held = false; // delivered
+    }
     return { ok: true };
   },
 };

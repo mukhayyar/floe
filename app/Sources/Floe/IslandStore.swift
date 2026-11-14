@@ -41,7 +41,9 @@ final class IslandStore: ObservableObject {
     @Published var update: (latest: String, current: String, url: URL?, canUpdate: Bool, updating: Bool)? = nil
     /// Kept by the proxy: install a newer Floe by itself once no agent is waiting on you.
     @Published var autoUpdate = true
-    /// Kept by the proxy: with auto-deliver, a question that recommends nothing is answered "go with what you'd recommend".
+    /// Kept by the proxy: answer agents' questions (recommended option, finished forms).
+    @Published var autoAnswer = false
+    /// Kept by the proxy: with auto-answer, a question that recommends nothing is answered "go with what you'd recommend".
     @Published var letAgentChoose = true
 
     /// Set by the window controller: give the panel keyboard focus.
@@ -634,6 +636,14 @@ final class IslandStore: ObservableObject {
         }
     }
 
+    func setAutoAnswer(_ on: Bool) {
+        autoAnswer = on
+        Task {
+            let r = await post("prefs", ["autoAnswer": on])
+            if !r.ok { autoAnswer = !on; say(r.message.isEmpty ? "Couldn't change auto-answer" : r.message) }
+        }
+    }
+
     func setLetAgentChoose(_ on: Bool) {
         letAgentChoose = on
         Task {
@@ -655,6 +665,7 @@ final class IslandStore: ObservableObject {
               let (data, _) = try? await URLSession.shared.data(from: url),
               let j = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
         autoDeliver = j["autoDeliver"] as? Bool ?? false
+        autoAnswer = j["autoAnswer"] as? Bool ?? false
         autoUpdate = j["autoUpdate"] as? Bool ?? true
         letAgentChoose = j["letAgentChoose"] as? Bool ?? true
     }

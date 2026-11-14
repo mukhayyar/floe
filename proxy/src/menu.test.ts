@@ -263,3 +263,16 @@ test("letting the agent choose never touches permission, plan or pick-any prompt
   expect(autoChoice(parseScreen(MULTI), opts)).toBeNull();
   expect(whyNot(parseScreen(MULTI))).toBe("a pick-any question");
 });
+
+test("delivering messages and answering questions are separate switches", () => {
+  const held = parseScreen(HELD, { unnumbered: true });
+  const rec = parseScreen([" Which database?", "❯ 1. Postgres (Recommended)", "  2. SQLite", "  3. Type something."]);
+  // only delivering
+  expect(autoChoice(held, { deliver: true, answer: false })?.text).toBe("Delivered the held message");
+  expect(autoChoice(rec, { deliver: true, answer: false })).toBeNull();
+  expect(whyNot(rec, { deliver: true, answer: false })).toBe("answering questions automatically is off");
+  // only answering
+  expect(autoChoice(held, { deliver: false, answer: true, letAgentChoose: true, question: true })).toBeNull();
+  expect(whyNot(held, { deliver: false, answer: true })).toBe("delivering messages automatically is off");
+  expect(autoChoice(rec, { deliver: false, answer: true })?.option.n).toBe(1);
+});

@@ -637,8 +637,17 @@ struct SettingsView: View {
                 Toggle("Colored border so Floe is easy to spot", isOn: $store.border)
                 Toggle(isOn: Binding(get: { store.autoDeliver }, set: { store.setAutoDeliver($0) })) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Auto-deliver")
-                        Text("Delivers messages held from other sessions and picks the option an agent marks “Recommended”, without asking. Permission prompts still wait for you.")
+                        Text("Deliver messages between agents")
+                        Text("When one Claude session messages another and Claude holds it for your approval, Floe delivers it without asking.")
+                            .font(.system(size: 10.5)).foregroundStyle(Color.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .disabled(!store.proxyOnline)
+                Toggle(isOn: Binding(get: { store.autoAnswer }, set: { store.setAutoAnswer($0) })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Answer agents’ questions")
+                        Text("Picks the option an agent marks “Recommended”, and submits a form once every question is answered. Permission prompts and plan approvals still wait for you.")
                             .font(.system(size: 10.5)).foregroundStyle(Color.dim)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -647,12 +656,12 @@ struct SettingsView: View {
                 Toggle(isOn: Binding(get: { store.letAgentChoose }, set: { store.setLetAgentChoose($0) })) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("When nothing is recommended, let the agent choose")
-                        Text("Answers “go with the option you’d recommend” to a question that marks no option. Pick-any questions, permission prompts and plan approvals still wait for you.")
+                        Text("Answers “go with the option you’d recommend” to a question that marks no option. Pick-any questions still wait for you.")
                             .font(.system(size: 10.5)).foregroundStyle(Color.dim)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .disabled(!store.proxyOnline || !store.autoDeliver)
+                .disabled(!store.proxyOnline || !store.autoAnswer)
                 .padding(.leading, 12)
                 Toggle(isOn: Binding(get: { store.autoUpdate }, set: { store.setAutoUpdate($0) })) {
                     VStack(alignment: .leading, spacing: 2) {

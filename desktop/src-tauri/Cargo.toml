@@ -1,6 +1,6 @@
 [package]
 name = "floe"
-version = "0.4.3"
+version = "0.4.4"
 description = "Floe: a top-of-screen overlay for your Orca agents"
 authors = ["mukhayyar"]
 edition = "2021"

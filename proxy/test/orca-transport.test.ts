@@ -27,7 +27,9 @@ async function until<T>(what: string, fn: () => T | undefined | false, ms = 8000
 }
 
 beforeAll(async () => {
-  prefs.autoDeliver = false; // never answer for the test (this Mac may have it on)
+  // never answer for the test (this Mac may have these on)
+  prefs.autoDeliver = false;
+  prefs.autoAnswer = false;
   fake = Bun.spawn([runner, join(import.meta.dir, "fake-orca.cjs"), dir], { stdin: "pipe", stdout: "pipe", stderr: "inherit" });
   let ready!: () => void;
   const up = new Promise<void>((r) => (ready = r));

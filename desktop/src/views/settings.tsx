@@ -5,6 +5,7 @@ import { useEffect, useState } from "preact/hooks";
 import { native } from "../native";
 import type { HotkeyHelp } from "../types";
 import {
+  autoAnswer,
   autoDeliver,
   autostart,
   boot,
@@ -13,6 +14,7 @@ import {
   peekOnDone,
   proxyOnline,
   proxyState,
+  setAutoAnswer,
   setAutoDeliver,
   autoUpdate,
   letAgentChoose,
@@ -80,14 +82,16 @@ export function SettingsView() {
         Colored border so Floe is easy to spot
       </Toggle>
       <Toggle on={autoDeliver.value} onChange={setAutoDeliver} disabled={!ok}>
-        <span>Auto-deliver</span>
-        <small>
-          Delivers messages held from other sessions and picks the option an agent marks “Recommended”, without asking. Permission prompts still wait for you.
-        </small>
+        <span>Deliver messages between agents</span>
+        <small>When one Claude session messages another and Claude holds it for your approval, Floe delivers it without asking.</small>
       </Toggle>
-      <Toggle on={letAgentChoose.value} onChange={setLetAgentChoose} disabled={!ok || !autoDeliver.value}>
+      <Toggle on={autoAnswer.value} onChange={setAutoAnswer} disabled={!ok}>
+        <span>Answer agents’ questions</span>
+        <small>Picks the option an agent marks “Recommended”, and submits a form once every question is answered. Permission prompts and plan approvals still wait for you.</small>
+      </Toggle>
+      <Toggle on={letAgentChoose.value} onChange={setLetAgentChoose} disabled={!ok || !autoAnswer.value}>
         <span>When nothing is recommended, let the agent choose</span>
-        <small>Answers “go with the option you’d recommend” to a question that marks no option. Pick-any questions, permission prompts and plan approvals still wait for you.</small>
+        <small>Answers “go with the option you’d recommend” to a question that marks no option. Pick-any questions still wait for you.</small>
       </Toggle>
       <Toggle on={autoUpdate.value} onChange={setAutoUpdate} disabled={!ok}>
         <span>Update Floe automatically</span>

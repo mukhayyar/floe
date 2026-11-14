@@ -630,7 +630,18 @@ export async function loadUpdate(check = false) {
   if (j && typeof j.current === "string") update.value = j;
 }
 
-/** With auto-deliver: a question that recommends nothing is answered "go with what you'd recommend". */
+/** Answer agents' questions (recommended option, finished forms); kept by the proxy. */
+export const autoAnswer = signal(false);
+export async function setAutoAnswer(onOff: boolean) {
+  autoAnswer.value = onOff;
+  const r = await post("prefs", { autoAnswer: onOff }, proxyOnline.value);
+  if (!r.ok) {
+    autoAnswer.value = !onOff;
+    say(r.message || "Couldn't change auto-answer");
+  }
+}
+
+/** With auto-answer: a question that recommends nothing is answered "go with what you'd recommend". */
 export const letAgentChoose = signal(true);
 export async function setLetAgentChoose(onOff: boolean) {
   letAgentChoose.value = onOff;
@@ -660,9 +671,10 @@ export async function updateNow() {
 }
 
 async function loadPrefs() {
-  const j = await getJson<{ autoDeliver?: boolean; autoUpdate?: boolean; letAgentChoose?: boolean }>("prefs");
+  const j = await getJson<{ autoDeliver?: boolean; autoAnswer?: boolean; autoUpdate?: boolean; letAgentChoose?: boolean }>("prefs");
   if (j) {
     autoDeliver.value = j.autoDeliver === true;
+    autoAnswer.value = j.autoAnswer === true;
     autoUpdate.value = j.autoUpdate !== false;
     letAgentChoose.value = j.letAgentChoose !== false;
   }

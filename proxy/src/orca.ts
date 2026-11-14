@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config";
 import { type AgentKind, agentLabel, byCatalog, kind } from "./agents";
-import { autoChoice, parseScreen, whyNot, type ScreenView } from "./menu";
+import { autoChoice, isDeliver, parseScreen, whyNot, type ScreenView } from "./menu";
 import { prefs } from "./prefs";
 import { LOCAL, OrcaError, OrcaRpc } from "./orca-rpc";
 import { THIS_MACHINE, openOrca } from "./platform";
@@ -188,6 +188,10 @@ export class OrcaWatcher {
   private autos = new Map<string, Auto>();
   /** host id → the harnesses it has installed (Orca's preflight), your Orca default first. */
   private launchable = new Map<string, { agents: string[]; at: number }>();
+  /** Agents whose screen shows a message held from another session (Floe looks for it itself). */
+  private held = new Set<string>();
+  private heldScanning = false;
+  private heldRound = 0;
   private detecting = new Set<string>();
 
   constructor(private cfg: Config) {
@@ -201,6 +205,7 @@ export class OrcaWatcher {
 
   start() {
     this.refreshHosts();
+    this.timers.push(setInterval(() => void this.heldScan(), 4000));
     this.timers.push(setInterval(() => this.refreshHosts(), 30_000));
     const localLoop = async () => {
       await this.pollHost(LOCAL);
@@ -331,6 +336,7 @@ export class OrcaWatcher {
     const seenSince = typeof facet.observedAt === "number" && facet.observedAt >= (a.stateStartedAt ?? a.updatedAt ?? Infinity);
     if (a.state === "waiting" || a.state === "blocked") attention = facet.kind ?? (a.toolName === "AskUserQuestion" ? "question" : "input");
     else if (facet.state === "blocked" && (a.state === "working" || seenSince)) attention = facet.kind ?? "input";
+    if (!attention && this.held.has(id)) attention = "input"; // a held message Floe saw on the screen itself
     const input = inputText(a.toolInput);
     const detail = attention && (!facet.message || GENERIC.test(facet.message)) ? (this.promptTitle(id) ?? facet.message ?? null)
       : attention && !live ? (facet.message ?? null) : live ? (facet.message ?? (a.toolName ? `${a.toolName}${input ? ": " + oneLine(firstLine(input) ?? "") : ""}` : null)) : null;
@@ -499,7 +505,7 @@ export class OrcaWatcher {
           if (a.detail && !GENERIC.test(a.detail)) tell(a.detail);
           else this.screen(a.id).then(() => { this.rebuild(); tell(this.promptTitle(a.id) ?? a.detail); }, () => tell(a.detail));
         };
-        if (prefs.autoDeliver) this.autoHold(a.id, announce);
+        if (prefs.autoDeliver || prefs.autoAnswer) this.autoHold(a.id, announce);
         else announce();
       }
       else if (a.state === "done" && p && (p.state === "working" || p.state === "waiting"))
@@ -553,6 +559,42 @@ export class OrcaWatcher {
 
   // MARK: auto-deliver
 
+  /**
+   * Claude holds a message from another session (in a different permission mode) behind a Deliver
+   * / Deny prompt. No hook announces it, and Orca on a paired server doesn't report idle agents'
+   * screens, so Floe looks at Claude agents' screens itself: idle ones every 4 s, working ones
+   * every 12 s. One that shows the prompt waits on you (or on auto-deliver) like any question.
+   */
+  private async heldScan() {
+    if (this.heldScanning) return;
+    this.heldScanning = true;
+    const round = ++this.heldRound;
+    let changed = false;
+    try {
+      const agents = this.snapshot.agents.filter((a) => /claude/.test(a.agentType) && (!a.attention || this.held.has(a.id)) && (a.state !== "working" || round % 3 === 0));
+      for (const a of agents) {
+        let shows = false;
+        try {
+          const { runtime, handle } = await this.terminalFor(a.id);
+          const res = await this.rpc.call<any>(runtime, "terminal.read", { terminal: handle, screen: true }, 6000);
+          const view = { handle, ...parseScreen(res.terminal?.tail ?? [], { agent: a.agentType, unnumbered: true }) };
+          shows = view.options.some((o) => isDeliver(o.label));
+          if (shows) this.screens.set(a.id, { view, at: Date.now() });
+        } catch {
+          continue; // its terminal is gone, or the host is unreachable: look again next time
+        }
+        if (shows !== this.held.has(a.id)) {
+          shows ? this.held.add(a.id) : this.held.delete(a.id);
+          changed = true;
+        }
+      }
+      for (const id of [...this.held]) if (!this.agent(id)) { this.held.delete(id); changed = true; }
+    } finally {
+      this.heldScanning = false;
+    }
+    if (changed) this.rebuild();
+  }
+
   private autoFor(id: string): Auto {
     let st = this.autos.get(id);
     if (!st) {
@@ -578,7 +620,7 @@ export class OrcaWatcher {
   private autoScan(snap: Snapshot) {
     const waiting = new Set(snap.agents.filter((a) => a.attention).map((a) => a.id));
     for (const id of this.autos.keys()) if (!waiting.has(id)) this.autos.delete(id);
-    if (!prefs.autoDeliver) {
+    if (!prefs.autoDeliver && !prefs.autoAnswer) {
       for (const st of this.autos.values()) this.autoTell(st);
       this.autos.clear();
       return;
@@ -601,12 +643,17 @@ export class OrcaWatcher {
       return;
     }
     const agent = this.agent(id);
-    const pick = autoChoice(view, { letAgentChoose: prefs.letAgentChoose, question: agent?.attention === "question" || agent?.tool === "AskUserQuestion" });
+    const pick = autoChoice(view, {
+      deliver: prefs.autoDeliver,
+      answer: prefs.autoAnswer,
+      letAgentChoose: prefs.letAgentChoose,
+      question: agent?.attention === "question" || agent?.tool === "AskUserQuestion",
+    });
     if (!pick) {
       // Nothing to choose (a permission prompt, a pick-any question): it's yours. An empty
       // screen right after a pick is only the menu going away.
       if (view.options.length || !st.picked) this.autoTell(st);
-      const why = whyNot(view);
+      const why = whyNot(view, { deliver: prefs.autoDeliver, answer: prefs.autoAnswer });
       const sig = [...view.lines, ...view.options.map((o) => o.label)].join("\n");
       if (view.options.length && sig !== st.leftSig) {
         st.leftSig = sig;
