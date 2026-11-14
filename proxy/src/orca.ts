@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config";
 import { type AgentKind, agentLabel, byCatalog, kind } from "./agents";
-import { autoChoice, parseScreen, type ScreenView } from "./menu";
+import { autoChoice, parseScreen, whyNot, type ScreenView } from "./menu";
 import { prefs } from "./prefs";
 import { LOCAL, OrcaError, OrcaRpc } from "./orca-rpc";
 import { THIS_MACHINE, openOrca } from "./platform";
@@ -117,6 +117,8 @@ interface Auto {
   tries: number;
   /** Back-off between looks at a prompt Floe leaves to you. */
   wait: number;
+  /** The prompt last logged as left to you (logged once). */
+  leftSig?: string;
 }
 
 /**
@@ -598,11 +600,18 @@ export class OrcaWatcher {
       st.next = Date.now() + 5000;
       return;
     }
-    const pick = autoChoice(view);
+    const agent = this.agent(id);
+    const pick = autoChoice(view, { letAgentChoose: prefs.letAgentChoose, question: agent?.attention === "question" || agent?.tool === "AskUserQuestion" });
     if (!pick) {
-      // Nothing to choose (a permission prompt, a question with no recommendation): it's
-      // yours. An empty screen right after a pick is only the menu going away.
+      // Nothing to choose (a permission prompt, a pick-any question): it's yours. An empty
+      // screen right after a pick is only the menu going away.
       if (view.options.length || !st.picked) this.autoTell(st);
+      const why = whyNot(view);
+      const sig = [...view.lines, ...view.options.map((o) => o.label)].join("\n");
+      if (view.options.length && sig !== st.leftSig) {
+        st.leftSig = sig;
+        console.log(`[auto] ${id.split("|")[0]} left to you (${why}): ${view.lines.find((l) => l.trim())?.trim().slice(0, 120) ?? ""}`);
+      }
       st.next = Date.now() + st.wait;
       st.wait = Math.min(st.wait * 2, 30_000);
       return;
@@ -616,7 +625,7 @@ export class OrcaWatcher {
       return;
     }
     try {
-      await this.answer(id, { option: pick.option.n });
+      await this.answer(id, pick.say ? { text: pick.say } : { option: pick.option.n });
     } catch (e) {
       console.log(`[auto] ${id.split("|")[0]} ${pick.text}: failed, ${(e as Error).message}`);
       st.next = Date.now() + 2000;
@@ -670,6 +679,9 @@ export class OrcaWatcher {
     }
     const a = this.agent(id);
     const view = { handle, ...parseScreen(res.terminal?.tail ?? [], { agent: a?.agentType, unnumbered: !!a?.attention && !NO_POINTER_MENUS.has(a.agentType) }) };
+    // An agent that isn't waiting isn't asking: a numbered list in its report is not a menu, and
+    // "answering" it would type a digit into the agent's prompt.
+    if (a && !a.attention) view.options = [];
     this.screens.set(id, { view, at: Date.now() });
     return view;
   }
@@ -816,7 +828,15 @@ export class OrcaWatcher {
     const { runtime, key: worktreeId } = this.route(workspaceKey);
     const args = ["agent", "launch", "--agent", agent, "--worktree", `id:${worktreeId}`];
     if (prompt?.trim()) args.push("--prompt", prompt.trim());
-    const res = await this.rpc.cli<any>(runtime, args, 60_000);
+    // In a terminal, whatever Orca's Chat | CLI setting says: Floe reads an agent's questions off its
+    // terminal and answers them with keys, and a chat tab has neither. (Older Orca: no flag.)
+    let res: any;
+    try {
+      res = await this.rpc.cli<any>(runtime, [...args, "--surface", "terminal"], 60_000);
+    } catch (e) {
+      if (!/surface|unknown (option|flag|argument)|unrecognized/i.test((e as Error).message)) throw e;
+      res = await this.rpc.cli<any>(runtime, args, 60_000);
+    }
     setTimeout(() => this.pollHost(runtime), 800);
     return res?.receipt?.detail ?? `started ${agent}`;
   }

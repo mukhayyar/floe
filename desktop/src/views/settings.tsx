@@ -15,9 +15,11 @@ import {
   proxyState,
   setAutoDeliver,
   autoUpdate,
+  letAgentChoose,
   loadUpdate,
   setAutostart,
   setAutoUpdate,
+  setLetAgentChoose,
   sound,
   update,
   updateNow,
@@ -82,6 +84,10 @@ export function SettingsView() {
         <small>
           Delivers messages held from other sessions and picks the option an agent marks “Recommended”, without asking. Permission prompts still wait for you.
         </small>
+      </Toggle>
+      <Toggle on={letAgentChoose.value} onChange={setLetAgentChoose} disabled={!ok || !autoDeliver.value}>
+        <span>When nothing is recommended, let the agent choose</span>
+        <small>Answers “go with the option you’d recommend” to a question that marks no option. Pick-any questions, permission prompts and plan approvals still wait for you.</small>
       </Toggle>
       <Toggle on={autoUpdate.value} onChange={setAutoUpdate} disabled={!ok}>
         <span>Update Floe automatically</span>

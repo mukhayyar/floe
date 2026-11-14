@@ -41,6 +41,8 @@ final class IslandStore: ObservableObject {
     @Published var update: (latest: String, current: String, url: URL?, canUpdate: Bool, updating: Bool)? = nil
     /// Kept by the proxy: install a newer Floe by itself once no agent is waiting on you.
     @Published var autoUpdate = true
+    /// Kept by the proxy: with auto-deliver, a question that recommends nothing is answered "go with what you'd recommend".
+    @Published var letAgentChoose = true
 
     /// Set by the window controller: give the panel keyboard focus.
     var requestKey: (() -> Void)?
@@ -632,6 +634,14 @@ final class IslandStore: ObservableObject {
         }
     }
 
+    func setLetAgentChoose(_ on: Bool) {
+        letAgentChoose = on
+        Task {
+            let r = await post("prefs", ["letAgentChoose": on])
+            if !r.ok { letAgentChoose = !on; say(r.message.isEmpty ? "Couldn't change that setting" : r.message) }
+        }
+    }
+
     func setAutoUpdate(_ on: Bool) {
         autoUpdate = on
         Task {
@@ -646,6 +656,7 @@ final class IslandStore: ObservableObject {
               let j = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
         autoDeliver = j["autoDeliver"] as? Bool ?? false
         autoUpdate = j["autoUpdate"] as? Bool ?? true
+        letAgentChoose = j["letAgentChoose"] as? Bool ?? true
     }
 
     private func loadChat() async {

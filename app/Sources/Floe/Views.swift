@@ -644,6 +644,16 @@ struct SettingsView: View {
                     }
                 }
                 .disabled(!store.proxyOnline)
+                Toggle(isOn: Binding(get: { store.letAgentChoose }, set: { store.setLetAgentChoose($0) })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("When nothing is recommended, let the agent choose")
+                        Text("Answers “go with the option you’d recommend” to a question that marks no option. Pick-any questions, permission prompts and plan approvals still wait for you.")
+                            .font(.system(size: 10.5)).foregroundStyle(Color.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .disabled(!store.proxyOnline || !store.autoDeliver)
+                .padding(.leading, 12)
                 Toggle(isOn: Binding(get: { store.autoUpdate }, set: { store.setAutoUpdate($0) })) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Update Floe automatically")

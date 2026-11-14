@@ -174,11 +174,17 @@ pointer has rested on it, so moving your hero across the top of the screen won't
 - It delivers messages that another Claude session sent and Claude held for your approval.
 - It picks the option an agent marked "(Recommended)" when asking a question. After several
   questions, it submits the answers once all are answered.
+- When a question marks no option as recommended (most do not), it answers "No preference. Go with
+  the option you'd recommend and carry on." The agent then makes the choice itself, with everything
+  it knows about the task. Turn this off with "When nothing is recommended, let the agent choose".
 
-Floe never auto-picks permission prompts, questions with no recommended option, or questions where
-you can pick more than one. You get a short banner each time it answers. The proxy does the
-answering, so it works while Floe is collapsed. It keeps the setting in
+Floe never answers permission prompts, plan approvals, or questions where you can pick more than one.
+You get a short banner each time it answers, and the proxy log says why it left anything to you.
+The proxy does the answering, so it works while Floe is collapsed. It keeps these settings in
 `~/.config/floe/prefs.json`.
+
+Floe answers agents that run in a terminal. Agents Floe starts always run in one, whatever Orca's
+Chat | CLI setting says. Orca's chat tabs can't be answered from Floe yet.
 
 **Updates.** Floe keeps itself up to date. Twice a day the proxy asks GitHub for the latest release.
 When a newer one is out, Settings shows it with an **Update now** button.

@@ -11,6 +11,8 @@ export interface Prefs {
   autoDeliver: boolean;
   /** Install a newer Floe by itself once no agent is waiting on you (on unless you turn it off). */
   autoUpdate: boolean;
+  /** With auto-deliver: a question that recommends nothing is answered "go with what you'd recommend". */
+  letAgentChoose: boolean;
 }
 
 function read(): Partial<Prefs> {
@@ -22,11 +24,16 @@ function read(): Partial<Prefs> {
 }
 
 const saved = read();
-export const prefs: Prefs = { autoDeliver: saved.autoDeliver === true, autoUpdate: saved.autoUpdate !== false };
+export const prefs: Prefs = {
+  autoDeliver: saved.autoDeliver === true,
+  autoUpdate: saved.autoUpdate !== false,
+  letAgentChoose: saved.letAgentChoose !== false,
+};
 
 export function setPrefs(p: Partial<Prefs>): Prefs {
   if (typeof p.autoDeliver === "boolean") prefs.autoDeliver = p.autoDeliver;
   if (typeof p.autoUpdate === "boolean") prefs.autoUpdate = p.autoUpdate;
+  if (typeof p.letAgentChoose === "boolean") prefs.letAgentChoose = p.letAgentChoose;
   mkdirSync(CONFIG_DIR, { recursive: true });
   writeFileSync(PATH, JSON.stringify(prefs, null, 2) + "\n");
   return prefs;

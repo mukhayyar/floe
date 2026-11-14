@@ -5,8 +5,8 @@
 //   GET  /events                     SSE: `snapshot` on every change, `activity` on transitions
 //   GET  /version                    {current, latest, newer, url, canUpdate, updating}: is a newer Floe out (?check=1 asks now)
 //   POST /update                     install the latest Floe now (the installer restarts Floe)
-//   GET  /prefs                      {autoDeliver, autoUpdate}: settings Floe changes from its Settings tab
-//   POST /prefs                      {autoDeliver?, autoUpdate?}  answer for you / install updates by itself
+//   GET  /prefs                      {autoDeliver, letAgentChoose, autoUpdate}: settings Floe changes from its Settings tab
+//   POST /prefs                      {autoDeliver?, letAgentChoose?, autoUpdate?}  answer for you / install updates by itself
 //   GET  /agents/:id/screen          what the agent's terminal shows + parsed menu options
 //   POST /agents/:id/answer          {option:n} | {text}  answer a question / send a follow-up
 //   POST /agents/:id/focus           jump to that agent in Orca
@@ -180,7 +180,7 @@ async function route(req: Request): Promise<Response> {
     }
     if (m === "POST" && p === "/prefs") {
       const next = setPrefs(await body(req));
-      console.log(`[prefs] autoDeliver ${next.autoDeliver ? "on" : "off"}, autoUpdate ${next.autoUpdate ? "on" : "off"}`);
+      console.log(`[prefs] autoDeliver ${next.autoDeliver ? "on" : "off"}, letAgentChoose ${next.letAgentChoose ? "on" : "off"}, autoUpdate ${next.autoUpdate ? "on" : "off"}`);
       setTimeout(() => orca.poll(), 50); // act on prompts that are already waiting
       return json({ ok: true, ...next });
     }

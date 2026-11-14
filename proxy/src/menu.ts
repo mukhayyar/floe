@@ -269,14 +269,54 @@ const CHECKBOX = /^(\[[ x✓✔×]?\]|[☐☑☒◻◼□■])\s/i;
  * - the review step after several questions, once all are answered → "Submit answers".
  * Anything else (permission prompts, questions with no recommendation) is left to you.
  */
-export function autoChoice(view: Pick<ScreenView, "lines" | "options">): { option: MenuOption; text: string } | null {
+/** What auto-deliver answers when an agent's question marks no option as recommended. */
+export const LET_AGENT_CHOOSE = "No preference. Go with the option you'd recommend and carry on.";
+const CHAT = /^chat about this$/i;
+/** A prompt asking for permission or approval (to run, edit, trust, accept a plan): always yours. */
+const APPROVAL = /\b(do you want to|would you like to proceed|proceed\?|allow|approve|permission|trust (this|the) (folder|directory)|ready to code|auto-accept)\b/i;
+
+export interface AutoPick {
+  option: MenuOption;
+  /** For the banner and the log. */
+  text: string;
+  /** Type this through the option (a free-text answer) instead of picking it. */
+  say?: string;
+}
+
+/**
+ * The answer auto-deliver gives, or null when the prompt is yours:
+ * - a held message from another session: deliver it;
+ * - an option marked "(Recommended)": pick it;
+ * - a finished multi-question form: submit it;
+ * - with `letAgentChoose`, a question (never a permission or plan prompt) that recommends nothing:
+ *   answer through its free-text option that the agent should go with what it would recommend.
+ */
+export function autoChoice(view: Pick<ScreenView, "lines" | "options"> & { multi?: boolean }, opts: { letAgentChoose?: boolean; question?: boolean } = {}): AutoPick | null {
   const { options, lines } = view;
-  if (options.length < 2 || (view as ScreenView).multi || options.some((o) => o.checked !== undefined || CHECKBOX.test(o.label))) return null;
-  const deliver = options.find((o) => DELIVER.test(o.label));
-  if (deliver) return { option: deliver, text: "Delivered the held message" };
-  const rec = options.find((o) => !o.freeText && RECOMMENDED.test(o.label));
-  if (rec) return { option: rec, text: `Picked “${rec.label.replace(RECOMMENDED, "").trim()}”` };
-  const submit = options.find((o) => SUBMIT.test(o.label));
-  if (submit && !lines.some((l) => UNANSWERED.test(l))) return { option: submit, text: "Submitted the answers" };
+  if (options.length < 2) return null;
+  const pickAny = !!view.multi || options.some((o) => o.checked !== undefined || CHECKBOX.test(o.label));
+  if (!pickAny) {
+    const deliver = options.find((o) => DELIVER.test(o.label));
+    if (deliver) return { option: deliver, text: "Delivered the held message" };
+    const rec = options.find((o) => !o.freeText && RECOMMENDED.test(o.label));
+    if (rec) return { option: rec, text: `Picked “${rec.label.replace(RECOMMENDED, "").trim()}”` };
+    const submit = options.find((o) => SUBMIT.test(o.label));
+    if (submit && !lines.some((l) => UNANSWERED.test(l))) return { option: submit, text: "Submitted the answers" };
+  }
+  if (opts.letAgentChoose && !pickAny) {
+    const question = opts.question || options.some((o) => CHAT.test(o.label));
+    const approval = [...lines, ...options.map((o) => o.label)].some((l) => APPROVAL.test(l));
+    const free = options.find((o) => o.freeText);
+    if (question && !approval && free) return { option: free, text: "Let the agent choose (nothing was marked recommended)", say: LET_AGENT_CHOOSE };
+  }
   return null;
+}
+
+/** Why auto-deliver left a prompt to you, for the log. */
+export function whyNot(view: Pick<ScreenView, "lines" | "options"> & { multi?: boolean }): string {
+  if (view.options.length < 2) return "no menu on screen";
+  if (view.multi || view.options.some((o) => o.checked !== undefined || CHECKBOX.test(o.label))) return "a pick-any question";
+  if ([...view.lines, ...view.options.map((o) => o.label)].some((l) => APPROVAL.test(l))) return "a permission or approval prompt";
+  if (!view.options.some((o) => o.freeText)) return "no recommended option and no free-text answer";
+  return "no recommended option";
 }

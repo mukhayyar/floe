@@ -630,6 +630,17 @@ export async function loadUpdate(check = false) {
   if (j && typeof j.current === "string") update.value = j;
 }
 
+/** With auto-deliver: a question that recommends nothing is answered "go with what you'd recommend". */
+export const letAgentChoose = signal(true);
+export async function setLetAgentChoose(onOff: boolean) {
+  letAgentChoose.value = onOff;
+  const r = await post("prefs", { letAgentChoose: onOff }, proxyOnline.value);
+  if (!r.ok) {
+    letAgentChoose.value = !onOff;
+    say(r.message || "Couldn't change that setting");
+  }
+}
+
 /** Install a newer Floe by itself once no agent is waiting on you (kept by the proxy). */
 export const autoUpdate = signal(true);
 export async function setAutoUpdate(onOff: boolean) {
@@ -649,10 +660,11 @@ export async function updateNow() {
 }
 
 async function loadPrefs() {
-  const j = await getJson<{ autoDeliver?: boolean; autoUpdate?: boolean }>("prefs");
+  const j = await getJson<{ autoDeliver?: boolean; autoUpdate?: boolean; letAgentChoose?: boolean }>("prefs");
   if (j) {
     autoDeliver.value = j.autoDeliver === true;
     autoUpdate.value = j.autoUpdate !== false;
+    letAgentChoose.value = j.letAgentChoose !== false;
   }
 }
 

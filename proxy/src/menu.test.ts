@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { autoChoice, parseScreen } from "./menu";
+import { autoChoice, LET_AGENT_CHOOSE, parseScreen, whyNot } from "./menu";
 
 test("Claude AskUserQuestion menu", () => {
   const tail = [
@@ -235,4 +235,31 @@ test("button prompts are answered with each harness's keys", () => {
   expect(parseScreen(["Approve tool call?", "[y] approve  [n] deny"], { agent: "cline" }).options.map((o) => o.label)).toEqual(["Approve", "Deny"]);
   const aider = ["Run shell command? (Y)es/(N)o/(D)on't ask again [Yes]: "];
   expect(parseScreen(aider, { agent: "aider" }).options.map((o) => [o.label, o.keys])).toEqual([["Yes", ["y", "\r"]], ["No", ["n", "\r"]], ["Don't ask again", ["d", "\r"]]]);
+});
+
+test("with nothing recommended, auto-deliver lets the agent choose (questions only)", () => {
+  const q = [" ☐ Speed", "Which search should ship?", "❯ 1. Keep bit-identical", "  2. Hybrid", "  3. Type something.", "─".repeat(20), "  4. Chat about this"];
+  const v = parseScreen(q);
+  expect(autoChoice(v)).toBeNull(); // off unless asked for
+  const pick = autoChoice(v, { letAgentChoose: true });
+  expect(pick?.option.label).toBe("Type something.");
+  expect(pick?.say).toBe(LET_AGENT_CHOOSE);
+  // a recommended option still wins
+  expect(autoChoice(parseScreen([" Which?", "❯ 1. A", "  2. B (Recommended)", "  3. Type something."]), { letAgentChoose: true })?.option.n).toBe(2);
+  // a list with no sign it's a question (no "Chat about this", not flagged as one) is left alone
+  expect(autoChoice(parseScreen([" Pick a colour", " ❯ 1. Red", "   2. Green", "   3. Type something."]), { letAgentChoose: true })).toBeNull();
+  expect(autoChoice(parseScreen([" Pick a colour", " ❯ 1. Red", "   2. Green", "   3. Type something."]), { letAgentChoose: true, question: true })?.say).toBe(LET_AGENT_CHOOSE);
+});
+
+test("letting the agent choose never touches permission, plan or pick-any prompts", () => {
+  const opts = { letAgentChoose: true, question: true };
+  const perm = [" Bash command", "   rm -rf build", " Do you want to proceed?", " ❯ 1. Yes", "   2. Yes, and don't ask again for rm commands", "   3. No, and tell Claude what to do differently (esc)"];
+  expect(autoChoice(parseScreen(perm), opts)).toBeNull();
+  expect(whyNot(parseScreen(perm))).toBe("a permission or approval prompt");
+  const plan = [" Ready to code?", " Would you like to proceed?", " ❯ 1. Yes, and auto-accept edits", "   2. Yes, and manually approve edits", "   3. No, keep planning", "   4. Type here to tell Claude what to change"];
+  expect(autoChoice(parseScreen(plan), opts)).toBeNull();
+  const gemini = ["│ Allow execution of [Shell]?  │", "│ ● 1. Allow once              │", "│   2. Allow for this session  │", "│   3. No, suggest changes (esc) │"];
+  expect(autoChoice(parseScreen(gemini), opts)).toBeNull();
+  expect(autoChoice(parseScreen(MULTI), opts)).toBeNull();
+  expect(whyNot(parseScreen(MULTI))).toBe("a pick-any question");
 });
