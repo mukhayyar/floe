@@ -56,7 +56,7 @@ The Linux and Windows builds are new, so a few things differ from the Mac (see [
 |---|---|
 | <img src="docs/live.png" width="300" alt="Live tab"> | **Live.** Agents that need you come first, then working, then recently finished. Each one shows its tool calls as a timeline that draws itself step by step. When an agent asks a question or wants permission, its options are buttons with their descriptions: tap one, or type an answer. A question in several parts shows its tabs, and a pick-any question shows checkboxes with Back and Next. Turn on **Auto-deliver** and Floe answers some prompts itself (see Settings). |
 | <img src="docs/hosts.png" width="300" alt="Hosts tab"> | **Hosts.** Every Orca host is a karakuri sage riding an orca through the open sea, before a snowy island with a shrine and a great torii standing in the water. Each orca swims its own loop, always facing the way it goes, and riding the swell. While its agents work, it swims faster, beating its flukes and leaving a wake, and the sage writes on its scroll (or types, on this Mac). When one needs you, it swims to the front and waits there, spouting, while the sage strikes its singing bowl. When the host is offline, it drifts asleep by the island with its lantern out. |
-| <img src="docs/host.png" width="300" alt="A host"> | **Drill down.** Tap a sage, then a project, then a worktree: its agents and terminals (the main terminal is marked). Peek at a terminal, type into it, message an agent, start any agent installed on that host (your Orca default first), or jump to it in Orca. |
+| <img src="docs/host.png" width="300" alt="A host"> | **Drill down.** Tap a sage, then a project, then a worktree: its agents and terminals (the main terminal is marked). Peek at a terminal, type into it, message an agent, start any agent installed on that host (your Orca default first), or jump to it in Orca. Each host's page shows how much of your Claude and Codex usage limits is gone (the 5-hour window and the week, with when each resets), as Orca tracks it. |
 | <img src="docs/project.png" width="300" alt="A project"> | **Ask Orca.** The Ask tab is a headless Claude Code session that can read your repos and drive Orca through its CLI, on any host. Pick a worktree and its pill sits above the input, so you know where a message goes. |
 
 The collapsed pill wraps the notch like a live activity: a spinner and a count while agents work, an
@@ -189,8 +189,17 @@ You get a short banner each time it acts, and the proxy log says why it left any
 The proxy does the work, so it carries on while Floe is collapsed. It keeps these settings in
 `~/.config/floe/prefs.json`.
 
-Floe answers agents that run in a terminal. Agents Floe starts always run in one, whatever Orca's
-Chat | CLI setting says. Orca's chat tabs can't be answered from Floe yet.
+Floe answers agents in Orca's chat tabs as well as agents in a terminal, on every host. A chat's
+questions and permission prompts come from its journal and go back through Orca's own calls, the
+ones Orca's phone app makes, so nothing is typed into anything. A message to a chat that isn't
+asking anything is a follow-up, queued if the agent is mid-turn. Agents Floe starts open as a chat
+or in a terminal, as Orca's Chat | CLI setting says.
+
+**Usage limits.** When a 5-hour or weekly limit passes 80%, and again at 95%, Floe shows a banner
+and the header says which ("Claude 5h 86%").
+
+**Chats Orca stopped.** When Orca quits or updates in the middle of a chat's turn, the Live tab
+offers to let those chats carry on, or to dismiss the offer.
 
 **Updates.** Floe keeps itself up to date. Twice a day the proxy asks GitHub for the latest release.
 When a newer one is out, Settings shows it with an **Update now** button.
@@ -238,9 +247,11 @@ Floe for Linux/Windows (desktop/, Tauri) ─┘         ├─ this machine: Orc
 ```
 
 - `proxy/src/orca.ts` polls every host and builds the host → project → worktree → agent
-  snapshot. It tracks each agent's tool steps and emits `snapshot` and `activity` events.
-  `menu.ts` reads choice menus off an agent's screen for each harness, including checkboxes,
-  descriptions and question tabs (`bun test`). `agents.ts` names the harnesses.
+  snapshot (asking Orca for only what changed). It tracks each agent's tool steps and emits
+  `snapshot` and `activity` events. `menu.ts` reads choice menus off an agent's screen for each
+  harness, including checkboxes, descriptions and question tabs (`bun test`). `chat.ts` reads and
+  answers Orca's chat tabs: journal items in, fingerprinted `agentSession.respondTo*` calls out.
+  `usage.ts` reads usage limits. `agents.ts` names the harnesses.
 - `sage/` holds the sages and their sea:
   - `sage.mjs` is the orca rider and its four loops, from the front or behind (`sage.mjs?az=232`);
     `palette.mjs` holds the materials.
@@ -267,7 +278,8 @@ CLIs you already have.
 
 `FLOE_DEMO=1 bun src/server.ts` (in `proxy/`) runs a made-up Orca with four hosts. One agent
 works through tool calls, one asks a question you can answer, one has finished, and one host is
-offline. The screenshots and video above come from it.
+offline. The screenshots and video above come from it. Add `FLOE_NO_SAGES=1` to skip rendering
+the sages (a few minutes of background CPU on first run).
 
 ### Build from source
 

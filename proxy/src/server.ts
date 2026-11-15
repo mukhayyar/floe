@@ -10,6 +10,8 @@
 //   GET  /agents/:id/screen          what the agent's terminal shows + parsed menu options
 //   POST /agents/:id/answer          {option:n} | {text}  answer a question / send a follow-up
 //   POST /agents/:id/focus           jump to that agent in Orca
+//   POST /hosts/:id/resume           {sessionIds?}  let chats Orca stopped (on quit or update) carry on
+//   POST /hosts/:id/resume/dismiss   {sessionIds?}  forget that offer
 //   POST /workspaces/:key/launch     {agent, prompt?}  start claude/codex in any workspace on any host
 //   POST /workspaces/:key/focus      open that workspace in Orca
 //   GET  /workspaces/:key/terminals  its terminals (first = main terminal)
@@ -48,8 +50,11 @@ const orca = (process.env.FLOE_DEMO ? new DemoWatcher() : new OrcaWatcher(cfg)) 
 const brain = new Brain(cfg, orca);
 orca.start();
 const sages = new Sages(() => orca.snapshot.hosts);
-setTimeout(() => sages.warm(), 8000);
-setInterval(() => sages.warm(), 60_000);
+// FLOE_NO_SAGES=1: no renders ahead of time (a demo or test run on a machine doing other work).
+if (!process.env.FLOE_NO_SAGES) {
+  setTimeout(() => sages.warm(), 8000);
+  setInterval(() => sages.warm(), 60_000);
+}
 watchUpdates(cfg, () => !orca.snapshot.counts.attention && !brain.busy);
 
 const enc = new TextEncoder();
@@ -239,6 +244,14 @@ async function route(req: Request): Promise<Response> {
     if (wsNew && m === "POST") {
       const { command } = await body(req);
       return json({ ok: true, result: await orca.newTerminal(decodeURIComponent(wsNew[1]), command) });
+    }
+
+    const resume = p.match(/^\/hosts\/([^/]+)\/resume(\/dismiss)?$/);
+    if (resume && m === "POST") {
+      const { sessionIds } = await body(req);
+      const ids = Array.isArray(sessionIds) ? sessionIds.filter((x: unknown) => typeof x === "string") : undefined;
+      const host = decodeURIComponent(resume[1]);
+      return json({ ok: true, result: resume[2] ? await orca.dismissResume(host, ids) : await orca.resume(host, ids) });
     }
 
     const ws = p.match(/^\/workspaces\/([^/]+)\/(launch|focus)$/);

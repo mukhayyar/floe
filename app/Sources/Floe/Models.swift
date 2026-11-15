@@ -93,8 +93,38 @@ struct HostView: Codable, Equatable, Identifiable {
     let counts: HostCounts
     /// Harnesses installed on this host, your Orca default first (empty until Orca has checked).
     let agents: [AgentKind]?
+    /// How much of each subscription's usage limits is gone (absent from older proxies).
+    let usage: [Usage]?
+    /// Chats Orca stopped mid-turn when it quit or updated, which can carry on.
+    let resumable: [Resumable]?
 
     var launchable: [AgentKind] { (agents ?? []).isEmpty ? AgentKind.fallback : agents! }
+}
+
+struct Resumable: Codable, Equatable, Identifiable {
+    let sessionId: String
+    let agent: String
+    let prompt: String
+    let trigger: String // quit | update
+    let at: Double
+    let agentId: String?
+    var id: String { sessionId }
+}
+
+/// One usage window: Claude's 5-hour session or its week, as Orca tracks it.
+struct UsageWindow: Codable, Equatable {
+    let usedPercent: Int
+    let resetsAt: Double?
+    let resets: String?
+}
+
+struct Usage: Codable, Equatable, Identifiable {
+    let provider: String
+    let label: String
+    let session: UsageWindow?
+    let weekly: UsageWindow?
+    var id: String { provider }
+    var peak: Int { max(session?.usedPercent ?? 0, weekly?.usedPercent ?? 0) }
 }
 
 struct Snapshot: Codable, Equatable {

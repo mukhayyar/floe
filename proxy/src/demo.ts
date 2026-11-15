@@ -141,6 +141,14 @@ export class DemoWatcher {
           workspaces: (PROJECTS[h.id] ?? []).reduce((s, [, w]) => s + w.length, 0), agents: mine.length,
         },
         agents: h.agents.map(kind),
+        usage: h.kind === "ssh" ? [] : [
+          { provider: "claude", label: "Claude", updatedAt: now,
+            session: { usedPercent: 42 + (this.tick % 30), resetsAt: now + 2 * 3600_000, resets: "4:00 PM" },
+            weekly: { usedPercent: 63, resetsAt: now + 3 * 86_400_000, resets: "Sat 6:00 AM" } },
+          { provider: "codex", label: "Codex", updatedAt: now,
+            session: { usedPercent: 18, resetsAt: now + 4 * 3600_000, resets: "6:10 PM" }, weekly: null },
+        ],
+        resumable: [],
       };
     });
     const att = agents.filter((a) => a.attention);
@@ -179,6 +187,8 @@ export class DemoWatcher {
   }
 
   async focus(_id: string) {}
+  async resume(_host: string, _ids?: string[]) { return "carrying on (demo)"; }
+  async dismissResume(_host: string, _ids?: string[]) { return "dismissed (demo)"; }
   async launch(_key: string, agent: string, _prompt?: string) { return `started ${agent} (demo)`; }
   async terminals(key: string) {
     return [{ id: `${key}|t1`, title: "zsh", isMain: true, agentId: null, preview: "~/code $ " }];

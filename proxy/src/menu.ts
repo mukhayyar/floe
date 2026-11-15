@@ -35,6 +35,10 @@ export interface ScreenView {
   tabs?: MenuTab[];
   /** ← and → move between the questions (a tab bar, Codex's "Question 1/2", a pick-any "Next" row). */
   steps?: boolean;
+  /** Known to be a question the agent asked (an Orca chat's journal says so). */
+  question?: boolean;
+  /** Known to be a permission prompt: never answered automatically. */
+  approval?: boolean;
 }
 
 // "❯ 1. Yes", "› 1. Yes", "● 1.  Allow once" (Gemini), "▶ 1. Approve once" / "→ [1] Postgres" (Kimi).
@@ -294,7 +298,7 @@ export interface AutoPick {
  *   answer through its free-text option that the agent should go with what it would recommend.
  */
 export function autoChoice(
-  view: Pick<ScreenView, "lines" | "options"> & { multi?: boolean },
+  view: Pick<ScreenView, "lines" | "options" | "question" | "approval"> & { multi?: boolean },
   opts: { deliver?: boolean; answer?: boolean; letAgentChoose?: boolean; question?: boolean } = {},
 ): AutoPick | null {
   const { options, lines } = view;
@@ -302,7 +306,7 @@ export function autoChoice(
   const pickAny = !!view.multi || options.some((o) => o.checked !== undefined || CHECKBOX.test(o.label));
   const deliver = options.find((o) => DELIVER.test(o.label));
   if (deliver) return opts.deliver === false || pickAny ? null : { option: deliver, text: "Delivered the held message" };
-  if (opts.answer === false) return null;
+  if (opts.answer === false || view.approval) return null;
   if (!pickAny) {
     const rec = options.find((o) => !o.freeText && RECOMMENDED.test(o.label));
     if (rec) return { option: rec, text: `Picked “${rec.label.replace(RECOMMENDED, "").trim()}”` };
@@ -310,7 +314,7 @@ export function autoChoice(
     if (submit && !lines.some((l) => UNANSWERED.test(l))) return { option: submit, text: "Submitted the answers" };
   }
   if (opts.letAgentChoose && !pickAny) {
-    const question = opts.question || options.some((o) => CHAT.test(o.label));
+    const question = opts.question || view.question || options.some((o) => CHAT.test(o.label));
     const approval = [...lines, ...options.map((o) => o.label)].some((l) => APPROVAL.test(l));
     const free = options.find((o) => o.freeText);
     if (question && !approval && free) return { option: free, text: "Let the agent choose (nothing was marked recommended)", say: LET_AGENT_CHOOSE };
@@ -319,10 +323,11 @@ export function autoChoice(
 }
 
 /** Why auto-deliver left a prompt to you, for the log. */
-export function whyNot(view: Pick<ScreenView, "lines" | "options"> & { multi?: boolean }, opts: { deliver?: boolean; answer?: boolean } = {}): string {
+export function whyNot(view: Pick<ScreenView, "lines" | "options" | "approval"> & { multi?: boolean }, opts: { deliver?: boolean; answer?: boolean } = {}): string {
   if (view.options.length < 2) return "no menu on screen";
   if (view.options.some((o) => DELIVER.test(o.label))) return opts.deliver === false ? "delivering messages automatically is off" : "a held message";
   if (opts.answer === false) return "answering questions automatically is off";
+  if (view.approval) return "a permission or approval prompt";
   if (view.multi || view.options.some((o) => o.checked !== undefined || CHECKBOX.test(o.label))) return "a pick-any question";
   if ([...view.lines, ...view.options.map((o) => o.label)].some((l) => APPROVAL.test(l))) return "a permission or approval prompt";
   if (!view.options.some((o) => o.freeText)) return "no recommended option and no free-text answer";

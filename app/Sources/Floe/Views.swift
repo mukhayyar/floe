@@ -422,6 +422,7 @@ struct ExpandedView: View {
         if s.counts.attention > 0 { bits.append("\(s.counts.attention) need you") }
         if s.counts.working > 0 { bits.append("\(s.counts.working) working") }
         if s.counts.done > 0 { bits.append("\(s.counts.done) done") }
+        if let warn = store.usageWarning { bits.append(warn) }
         return bits.isEmpty ? "No agents running" : bits.joined(separator: " · ")
     }
 }

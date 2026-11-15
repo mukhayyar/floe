@@ -664,6 +664,13 @@ export async function setAutoUpdate(onOff: boolean) {
 }
 
 /** Install the latest Floe now: the installer stops Floe, updates it and starts it again. */
+/** Let the chats Orca stopped on one host carry on, or forget the offer. */
+export async function resumeChats(hostId: string, dismiss = false) {
+  const r = await post(`hosts/${enc(hostId)}/resume${dismiss ? "/dismiss" : ""}`, {}, proxyOnline.value);
+  const m = r.message || (r.ok ? "Done" : "Couldn't reach Orca");
+  say(m.charAt(0).toUpperCase() + m.slice(1));
+}
+
 export async function updateNow() {
   const r = await post("update", {}, proxyOnline.value);
   say(r.message || (r.ok ? "Updating Floe…" : "Couldn't update Floe"));
@@ -730,8 +737,25 @@ function tink() {
   } catch {}
 }
 
+/** The most-used limit across hosts once it passes 80% ("Claude 5h 86%"), for the header. */
+export function usageWarning(): string | null {
+  let best: { text: string; percent: number } | null = null;
+  for (const h of snapshot.value?.hosts ?? []) {
+    for (const u of h.usage ?? []) {
+      for (const [name, w] of [["5h", u.session], ["week", u.weekly]] as const) {
+        if (w && w.usedPercent >= 80 && w.usedPercent > (best?.percent ?? 0)) best = { text: `${u.label} ${name} ${w.usedPercent}%`, percent: w.usedPercent };
+      }
+    }
+  }
+  return best?.text ?? null;
+}
+
 function onActivity(a: Activity) {
   switch (a.kind) {
+    case "usage":
+    case "resumable":
+      showPeek({ mood: "attention", title: a.title, text: `${a.text} · ${a.workspace}`, agentId: null }, 8);
+      break;
     case "attention":
       if (sound.value) tink();
       fetchScreen(a.agentId);

@@ -6,7 +6,8 @@ struct LiveView: View {
 
     var body: some View {
         let live = store.liveAgents
-        if live.isEmpty {
+        let stopped = store.hosts.filter { !($0.resumable ?? []).isEmpty }
+        if live.isEmpty && stopped.isEmpty {
             VStack(spacing: 8) {
                 OrcaGlyph().foregroundStyle(Color.dim).frame(width: 26, height: 26)
                 Text(store.snapshot?.online == false ? (store.snapshot?.headline ?? "Orca is offline") : "All quiet across your hosts")
@@ -19,12 +20,42 @@ struct LiveView: View {
         } else {
             ScrollView {
                 LazyVStack(spacing: 8) {
+                    ForEach(stopped) { h in ResumeBanner(host: h) }
                     ForEach(live) { a in AgentCard(agent: a) }
                 }
                 .padding(12)
             }
             .scrollIndicators(.never)
         }
+    }
+}
+
+/// Chats Orca stopped when it quit or updated: carry on, or leave them.
+struct ResumeBanner: View {
+    @EnvironmentObject var store: IslandStore
+    let host: HostView
+
+    var body: some View {
+        let list = host.resumable ?? []
+        let why = list.first?.trigger == "update" ? "Orca updated" : "Orca quit"
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.clockwise.circle.fill").foregroundStyle(Color.orcaOrange)
+                Text("\(list.count) chat\(list.count == 1 ? "" : "s") stopped when \(why)\(host.kind == "local" ? "" : " on \(host.name)")")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer(minLength: 0)
+            }
+            ForEach(list.prefix(3)) { r in
+                Text("“\(r.prompt)”").font(.system(size: 11)).foregroundStyle(Color.dim).lineLimit(1)
+            }
+            HStack(spacing: 8) {
+                ActionButton(title: "Carry on", symbol: "play.fill") { store.resume(host.id) }
+                ActionButton(title: "Dismiss", symbol: "xmark") { store.resume(host.id, dismiss: true) }
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.orcaOrange.opacity(0.1)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.orcaOrange.opacity(0.35), lineWidth: 1))
     }
 }
 

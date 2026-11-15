@@ -291,6 +291,18 @@ final class IslandStore: ObservableObject {
         if presentation == .expanded { refreshScreens() }
     }
 
+    /// The most-used limit across hosts once it passes 80% ("Claude 5h 86%"), for the header.
+    var usageWarning: String? {
+        var best: (label: String, window: String, percent: Int)?
+        for h in hosts { for u in h.usage ?? [] {
+            for (name, w) in [("5h", u.session), ("week", u.weekly)] {
+                guard let w, w.usedPercent >= 80, w.usedPercent > (best?.percent ?? 0) else { continue }
+                best = (u.label, name, w.usedPercent)
+            }
+        } }
+        return best.map { "\($0.label) \($0.window) \($0.percent)%" }
+    }
+
     private func onActivity(_ a: Activity) {
         switch a.kind {
         case "attention":
@@ -303,6 +315,8 @@ final class IslandStore: ObservableObject {
             if peekOnDone {
                 showPeek(Peek(mood: .done, title: "\(a.workspace) finished", text: a.text, agentId: a.agentId), seconds: 6)
             }
+        case "usage", "resumable":
+            showPeek(Peek(mood: .attention, title: a.title, text: "\(a.text) · \(a.workspace)", agentId: nil), seconds: 8)
         default: break
         }
     }
@@ -628,6 +642,14 @@ final class IslandStore: ObservableObject {
     }
 
     /// Install the latest Floe now: the installer stops Floe, updates it and starts it again.
+    /// Let the chats Orca stopped on one host carry on, or forget the offer.
+    func resume(_ hostId: String, dismiss: Bool = false) {
+        Task {
+            let r = await post("hosts/\(path(hostId))/resume\(dismiss ? "/dismiss" : "")", [:])
+            say(r.message.isEmpty ? (r.ok ? "Done" : "Couldn't reach Orca") : r.message.prefix(1).uppercased() + r.message.dropFirst())
+        }
+    }
+
     func updateNow() {
         Task {
             let r = await post("update", [:])

@@ -74,6 +74,33 @@ export interface HostView {
   projects: ProjectView[];
   counts: { working: number; attention: number; workspaces: number; agents: number };
   agents?: AgentKind[] | null;
+  /** How much of each subscription's usage limits is gone (absent from older proxies). */
+  usage?: Usage[];
+  /** Chats Orca stopped mid-turn when it quit or updated, which can carry on. */
+  resumable?: Resumable[];
+}
+
+export interface Resumable {
+  sessionId: string;
+  agent: string;
+  prompt: string;
+  trigger: string; // quit | update
+  at: number;
+  agentId: string | null;
+}
+
+/** One usage window: Claude's 5-hour session or its week, as Orca tracks it. */
+export interface UsageWindow {
+  usedPercent: number;
+  resetsAt: number | null;
+  resets: string | null;
+}
+
+export interface Usage {
+  provider: string;
+  label: string;
+  session: UsageWindow | null;
+  weekly: UsageWindow | null;
 }
 
 export interface Snapshot {

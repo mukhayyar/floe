@@ -123,6 +123,10 @@ struct HostDetail: View {
                             .fill(LinearGradient(colors: zoneTint(host.id), startPoint: .topLeading, endPoint: .bottomTrailing))
                     )
 
+                    if let usage = host.usage, !usage.isEmpty {
+                        UsageMeters(usage: usage)
+                    }
+
                     if host.projects.count > 5 {
                         HStack(spacing: 6) {
                             Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Color.dim)
@@ -502,5 +506,49 @@ struct AgentDots: View {
                 Text("+\(agents.count - 6)").font(.system(size: 9, weight: .semibold)).foregroundStyle(Color.dim)
             }
         }
+    }
+}
+
+/// Color for how much of a limit is gone: blue, then orange from 80%, red from 95%.
+func usageColor(_ percent: Int) -> Color {
+    percent >= 95 ? Color(red: 1.0, green: 0.36, blue: 0.36) : percent >= 80 ? Color.orcaOrange : Color.orcaBlue
+}
+
+/// Each subscription's 5-hour and weekly usage on this host, as Orca tracks it.
+struct UsageMeters: View {
+    let usage: [Usage]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SectionTitle(text: "Usage limits", count: 0)
+            ForEach(usage) { u in
+                HStack(alignment: .top, spacing: 10) {
+                    Text(u.label).font(.system(size: 11.5, weight: .semibold)).frame(width: 64, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let w = u.session { meter("5-hour", w) }
+                        if let w = u.weekly { meter("Week", w) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func meter(_ name: String, _ w: UsageWindow) -> some View {
+        HStack(spacing: 8) {
+            Text(name).font(.system(size: 10.5)).foregroundStyle(Color.dim).frame(width: 40, alignment: .leading)
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.08))
+                    Capsule().fill(usageColor(w.usedPercent)).frame(width: max(3, g.size.width * CGFloat(w.usedPercent) / 100))
+                }
+            }
+            .frame(height: 5)
+            Text("\(w.usedPercent)%").font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                .foregroundStyle(w.usedPercent >= 80 ? usageColor(w.usedPercent) : .white.opacity(0.85))
+                .frame(width: 34, alignment: .trailing)
+            Text(w.resets.map { "resets \($0)" } ?? "").font(.system(size: 10)).foregroundStyle(Color.dim)
+                .frame(width: 96, alignment: .leading).lineLimit(1)
+        }
+        .help(w.resets.map { "\(w.usedPercent)% used, resets \($0)" } ?? "\(w.usedPercent)% used")
     }
 }

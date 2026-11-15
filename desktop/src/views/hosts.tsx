@@ -28,7 +28,7 @@ import {
   toggleTerminal,
   workspace,
 } from "../store";
-import type { Agent, HostNav, HostView, ProjectView, TerminalInfo, WorkspaceView } from "../types";
+import type { Agent, HostNav, HostView, ProjectView, TerminalInfo, Usage, UsageWindow, WorkspaceView } from "../types";
 import { GatheringView } from "./gathering";
 import { AgentCard } from "./live";
 import { ActionButton, AgentDots, MoodIndicator, Pebble, SectionTitle, Spinner, Tag, zoneTint } from "./parts";
@@ -135,6 +135,7 @@ function HostDetail({ hostId }: { hostId: string }) {
           </div>
         </div>
       </div>
+      {!!h.usage?.length && <UsageMeters usage={h.usage} />}
       {h.projects.length > 5 && (
         <label class="filter">
           <Icon name="search" size={11} class="dim" />
@@ -154,6 +155,35 @@ function HostDetail({ hostId }: { hostId: string }) {
       )}
       {projects.map((p) => (
         <ProjectRow key={p.key} host={h} project={p} />
+      ))}
+    </div>
+  );
+}
+
+/** Blue, then orange from 80%, red from 95%. */
+const usageColor = (p: number) => (p >= 95 ? "var(--red, rgb(255, 92, 92))" : p >= 80 ? "var(--orange)" : "var(--blue)");
+
+/** Each subscription's 5-hour and weekly usage on this host, as Orca tracks it. */
+function UsageMeters({ usage }: { usage: Usage[] }) {
+  const meter = (name: string, w: UsageWindow) => (
+    <div class="usage-meter" title={`${w.usedPercent}% used${w.resets ? `, resets ${w.resets}` : ""}`}>
+      <span class="dim">{name}</span>
+      <span class="usage-bar"><span style={{ width: `${Math.max(2, w.usedPercent)}%`, background: usageColor(w.usedPercent) }} /></span>
+      <span class="usage-pct" style={w.usedPercent >= 80 ? { color: usageColor(w.usedPercent) } : undefined}>{w.usedPercent}%</span>
+      <span class="dim usage-reset">{w.resets ? `resets ${w.resets}` : ""}</span>
+    </div>
+  );
+  return (
+    <div class="col gap6">
+      <SectionTitle text="Usage limits" count={0} />
+      {usage.map((u) => (
+        <div class="usage-row" key={u.provider}>
+          <span class="usage-name">{u.label}</span>
+          <div class="col gap3 grow">
+            {u.session && meter("5-hour", u.session)}
+            {u.weekly && meter("Week", u.weekly)}
+          </div>
+        </div>
       ))}
     </div>
   );

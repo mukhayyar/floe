@@ -26,6 +26,7 @@ import {
   streaming,
   tab,
   TOP_INSET,
+  usageWarning,
 } from "./store";
 import type { Mood } from "./types";
 import { ChatView } from "./views/chat";
@@ -185,6 +186,8 @@ function summary(): string {
   if (s.counts.attention > 0) bits.push(`${s.counts.attention} need you`);
   if (s.counts.working > 0) bits.push(`${s.counts.working} working`);
   if (s.counts.done > 0) bits.push(`${s.counts.done} done`);
+  const warn = usageWarning();
+  if (warn) bits.push(warn);
   return bits.length ? bits.join(" · ") : "No agents running";
 }
 

@@ -2,7 +2,7 @@
 // over a unix socket (a named pipe on Windows) that the real Orca serves. Run it under Node, as
 // Orca does (Electron's Node), so the test crosses the same client/server pair as real use.
 //
-//   node fake-orca.cjs <userDataDir> [--held]
+//   node fake-orca.cjs <userDataDir> [--held | --chat]
 //
 // It has one Claude agent asking a question. Every terminal.send is printed as {"sent": …} on
 // stdout; answering the question puts the agent back to work. Prints "ready" once it listens.
@@ -48,7 +48,49 @@ const heldScreen = () => [
   ...HELD_OPTIONS.map((o, i) => (i === cursor ? ` ❯ ${o}` : `   ${o}`)),
 ];
 
-let asked = !heldMode;
+// With --chat: one Claude agent in an Orca chat tab (no terminal) asking a two-question form in
+// its journal. Answers must come with an envelope whose fingerprint matches, as Orca checks.
+const chatMode = process.argv[3] === "--chat";
+const crypto = require("node:crypto");
+const SESSION = "claude_0000test";
+let chatResolved = null; // the answers, once given
+let resumed = false;
+const sentMessages = [];
+const canonical = (v) => {
+  if (v === null || typeof v !== "object") return JSON.stringify(v ?? null);
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  const e = Object.entries(v).filter(([, x]) => x !== undefined).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${e.map(([k, x]) => `${JSON.stringify(k)}:${canonical(x)}`).join(",")}}`;
+};
+const fp = (method, sessionId, fields) => crypto.createHash("sha256").update(canonical({ method, sessionId, fields })).digest("hex");
+const ITEM = "orca:claude-prompt%3Aclaude_0000test%3A1";
+function chatPage() {
+  const opts = (q, labels) => labels.map((label, i) => ({ id: `${q}:choice-${i + 1}`, label }));
+  return {
+    sessionId: SESSION, epoch: "e", direction: "tail", fence: 4, working: !chatResolved,
+    actionablePromptIds: chatResolved ? [] : [ITEM],
+    items: [
+      { itemId: "u1", revision: 0, sequence: 1, body: { kind: "message", role: "user", blocks: [{ type: "text", text: "Style the button" }] } },
+      { itemId: ITEM, revision: 2, sequence: 5, body: {
+        kind: "question", question: "Which colour?", options: opts("q1", ["Teal (Recommended)", "Amber"]), freeTextQuestionId: "q1",
+        questions: [
+          { id: "q1", question: "Which colour?", header: "Colour", multiSelect: false, freeTextQuestionId: "q1", options: opts("q1", ["Teal (Recommended)", "Amber"]) },
+          { id: "q2", question: "Which size?", header: "Size", multiSelect: false, options: opts("q2", ["Small", "Large (Recommended)"]) },
+        ],
+        resolution: chatResolved ? { state: "resolved", answers: chatResolved } : { state: "pending", selectedOptionId: null, resolvedBy: null, resolvedAt: null },
+      } },
+      ...sentMessages.map((text, i) => ({ itemId: `m${i}`, revision: 0, sequence: 10 + i, body: { kind: "message", role: "user", blocks: [{ type: "text", text }] } })),
+    ],
+  };
+}
+function chatAgent() {
+  return {
+    paneKey: `structured-agent-session-${SESSION}:tab-c`, agentType: "claude", state: chatResolved ? "working" : "blocked", hasLivePty: null,
+    toolName: null, programStatus: null, conversationName: "Style the button", stateStartedAt: now, updatedAt: now,
+  };
+}
+
+let asked = !heldMode && !chatMode;
 const now = Date.now();
 
 function agent() {
@@ -75,6 +117,10 @@ function heldAgent() {
 }
 
 function worktrees() {
+  if (chatMode) {
+    return [{ worktreeId: "wt-1", repoId: "repo-1", hostId: "local", repo: "demo-app", path: path.join(dir, "demo-app"), branch: "refs/heads/main",
+      isArchived: false, isMainWorktree: true, status: chatResolved ? "working" : "permission", sidebarStatus: chatResolved ? "working" : "permission", liveTerminalCount: 0, agents: [chatAgent()] }];
+  }
   if (heldMode) {
     return [{ worktreeId: "wt-1", repoId: "repo-1", hostId: "local", repo: "demo-app", path: path.join(dir, "demo-app"), branch: "refs/heads/main",
       isArchived: false, isMainWorktree: true, status: held ? "inactive" : "working", sidebarStatus: held ? "done" : "working", liveTerminalCount: 1, agents: [heldAgent()] }];
@@ -86,12 +132,55 @@ function worktrees() {
   }];
 }
 
+// Over the local socket a client declares nothing; Orca serves it chat sessions (clientKind undefined).
+function chatEnvelopeOk(p, method, fields) {
+  const env = p.envelope ?? {};
+  if (env.sessionId !== SESSION) throw Object.assign(new Error("unknown session"), { code: "agent_session_not_found" });
+  if (!/^\d{13}-[0-9a-f]{32}$/.test(env.clientOperationId ?? "")) throw Object.assign(new Error("Invalid client operation id"), { code: "invalid_argument" });
+  if (env.payloadFingerprint !== fp(method, SESSION, fields)) return { ok: false, refusal: { code: "agent_session_operation_conflict", message: "fingerprint mismatch" } };
+  return null;
+}
+
 const handlers = {
+  "agentSession.history": (p) => {
+    if (p.sessionId !== SESSION) throw Object.assign(new Error("unknown session"), { code: "agent_session_not_found" });
+    return { ok: true, page: chatPage() };
+  },
+  "agentSession.respondToQuestion": (p) => {
+    const { envelope, ...fields } = p;
+    const bad = chatEnvelopeOk(p, "agentSession.respondTo:question", fields);
+    if (bad) return bad;
+    if (chatResolved) return { ok: false, refusal: { code: "agent_session_already_resolved", message: "already answered" } };
+    if (p.itemId !== ITEM || p.expectedRevision !== 2) return { ok: false, refusal: { code: "agent_session_item_revision_stale", message: "stale" } };
+    chatResolved = p.answers ?? [{ questionId: "q1", optionIds: [p.optionId] }];
+    console.log(JSON.stringify({ responded: { itemId: p.itemId, answers: chatResolved } }));
+    return { ok: true, value: { resolution: { state: "resolved" } } };
+  },
+  // A chat Orca stopped when it updated, offered to carry on until someone does.
+  "agentSession.restartResumable": () => ({
+    sessions: chatMode && !resumed ? [{ sessionId: "claude_0000stopped", workspaceId: "wt-1", agent: "claude", work: { kind: "turn", id: "t1" },
+      trigger: "update", recordedAt: now, latestPrompt: "Refactor the parser", executionHostId: "local", workspaceKind: "git-worktree" }] : [],
+    failed: [],
+  }),
+  "agentSession.restartContinue": (p) => {
+    resumed = true;
+    console.log(JSON.stringify({ continued: p.sessionIds ?? "all" }));
+    return { results: [{ sessionId: "claude_0000stopped", outcome: "continued" }] };
+  },
+  "agentSession.send": (p) => {
+    const { envelope, ...fields } = p;
+    const bad = chatEnvelopeOk(p, "agentSession.send", fields);
+    if (bad) return bad;
+    const text = p.body?.blocks?.[0]?.text;
+    sentMessages.push(text);
+    console.log(JSON.stringify({ chatSent: { text, delivery: p.delivery } }));
+    return { ok: true, value: { status: "queued" } };
+  },
   "worktree.ps": () => ({ worktrees: worktrees(), totalCount: 1, truncated: false }),
   "ssh.listTargetSummaries": () => ({ targets: [] }),
   "preflight.detectAgents": () => ["claude", "codex"],
   "settings.getAgentLaunch": () => ({ settings: { defaultTuiAgent: "claude", disabledTuiAgents: [] } }),
-  "terminal.list": () => ({ terminals: heldMode
+  "terminal.list": () => ({ terminals: chatMode ? [] : heldMode
     ? [{ handle: "term-2", worktreeId: "wt-1", tabId: "tab-2", leafId: "leaf-2", connected: true, writable: true }]
     : [{ handle: "term-1", worktreeId: "wt-1", tabId: "tab-1", leafId: "leaf-1", connected: true, writable: true }] }),
   "terminal.read": (p) => {

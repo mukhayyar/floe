@@ -14,9 +14,14 @@ import { childEnv, type Config } from "./config";
 import { IS_WIN, orcaCli, orcaElectron } from "./platform";
 
 export class OrcaError extends Error {
-  constructor(message: string, public code = "orca_error") {
+  constructor(message: string, public code = "orca_error", public data?: any) {
     super(message);
   }
+}
+
+export interface CallOptions {
+  /** Capabilities a paired host wants a client to declare for this call (chat sessions). */
+  caps?: string[];
 }
 
 export const LOCAL = "local";
@@ -83,7 +88,7 @@ export class OrcaRpc {
             continue;
           }
           if (frame.id !== id) continue;
-          if (frame.ok === false) return finish(new OrcaError(frame.error?.message ?? "Orca error", frame.error?.code));
+          if (frame.ok === false) return finish(new OrcaError(frame.error?.message ?? "Orca error", frame.error?.code, frame.error?.data));
           return finish(null, frame.result as T);
         }
       });
@@ -125,7 +130,7 @@ export class OrcaRpc {
           if (!p) continue;
           this.pending.delete(msg.id);
           clearTimeout(p.timer);
-          msg.ok ? p.resolve(msg.result) : p.reject(new OrcaError(msg.error?.message ?? "remote error", msg.error?.code));
+          msg.ok ? p.resolve(msg.result) : p.reject(new OrcaError(msg.error?.message ?? "remote error", msg.error?.code, msg.error?.data));
         }
       }
       // Bridge died: fail everything in flight; the next call respawns it.
@@ -138,7 +143,7 @@ export class OrcaRpc {
     return proc;
   }
 
-  private remote<T>(env: string, method: string, params: unknown, timeoutMs: number): Promise<T> {
+  private remote<T>(env: string, method: string, params: unknown, timeoutMs: number, caps?: string[]): Promise<T> {
     const proc = this.ensureBridge();
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
@@ -147,14 +152,14 @@ export class OrcaRpc {
         reject(new OrcaError(`${method} timed out`, "runtime_timeout"));
       }, timeoutMs + 2000);
       this.pending.set(id, { resolve, reject, timer });
-      (proc.stdin as any).write(JSON.stringify({ id, env, method, params, timeoutMs }) + "\n");
+      (proc.stdin as any).write(JSON.stringify({ id, env, method, params, timeoutMs, ...(caps?.length ? { caps } : {}) }) + "\n");
       (proc.stdin as any).flush?.();
     });
   }
 
-  /** Read-only RPC against a host: "local" or a paired environment id. */
-  call<T = any>(host: string, method: string, params: unknown = {}, timeoutMs = 8000): Promise<T> {
-    return host === LOCAL ? this.local<T>(method, params, timeoutMs) : this.remote<T>(host, method, params, timeoutMs);
+  /** RPC against a host: "local" or a paired environment id. The local socket needs no caps. */
+  call<T = any>(host: string, method: string, params: unknown = {}, timeoutMs = 8000, opts: CallOptions = {}): Promise<T> {
+    return host === LOCAL ? this.local<T>(method, params, timeoutMs) : this.remote<T>(host, method, params, timeoutMs, opts.caps);
   }
 
   /** Run the official CLI against a host (writes and anything without a stable RPC shape). */

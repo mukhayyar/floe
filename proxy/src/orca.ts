@@ -3,7 +3,9 @@ import { join } from "node:path";
 import type { Config } from "./config";
 import { type AgentKind, agentLabel, byCatalog, kind } from "./agents";
 import { autoChoice, isDeliver, parseScreen, whyNot, type ScreenView } from "./menu";
+import { applyChatInput, CHAT_CAPS, ChatInputError, chatSessionId, chatView, freshDraft, pendingPrompt, respondRequest, sendRequest, transcript, type ChatDraft, type ChatPrompt } from "./chat";
 import { prefs } from "./prefs";
+import { parseUsage, usageWarnings, type Usage } from "./usage";
 import { LOCAL, OrcaError, OrcaRpc } from "./orca-rpc";
 import { THIS_MACHINE, openOrca } from "./platform";
 
@@ -74,6 +76,21 @@ export interface HostView {
   counts: { working: number; attention: number; workspaces: number; agents: number };
   /** Harnesses installed on this host that Floe can start, your Orca default first. */
   agents: AgentKind[];
+  /** How much of each subscription's usage limits is gone (Orca's figures; none for SSH targets). */
+  usage: Usage[];
+  /** Chats Orca stopped mid-turn when it quit or updated, which can carry on. */
+  resumable: Resumable[];
+}
+
+export interface Resumable {
+  sessionId: string;
+  agent: string;
+  /** The last thing asked of it. */
+  prompt: string;
+  trigger: string; // quit | update
+  at: number;
+  /** The agent row it belongs to, when Floe sees one. */
+  agentId: string | null;
 }
 
 export interface Snapshot {
@@ -88,7 +105,7 @@ export interface Snapshot {
 }
 
 export interface Activity {
-  kind: "attention" | "done" | "started" | "auto";
+  kind: "attention" | "done" | "started" | "auto" | "usage" | "resumable";
   agentId: string;
   workspace: string;
   title: string;
@@ -101,6 +118,8 @@ interface HostState {
   error: string | null;
   worktrees: any[];
   at: number;
+  /** worktree.ps's content id, sent back so an unchanged list costs nothing. */
+  snapshotId?: string;
 }
 
 /** Auto-deliver's view of one agent waiting on a prompt. */
@@ -190,7 +209,15 @@ export class OrcaWatcher {
   private launchable = new Map<string, { agents: string[]; at: number }>();
   /** Agents whose screen shows a message held from another session (Floe looks for it itself). */
   private held = new Set<string>();
+  /** Chat tabs: the prompt last read from each one's journal, its fence, and answers picked so far. */
+  private chats = new Map<string, { prompt: ChatPrompt | null; fence: number | null; draft: ChatDraft | null; at: number }>();
   private heldScanning = false;
+  /** runtime → its usage figures, when they were read, and when Orca was last asked to refresh them. */
+  private usage = new Map<string, { list: Usage[]; at: number; refreshedAt: number }>();
+  private usageSeen = new Map<string, { level: number; resetsAt: number | null }>();
+  private usageBusy = new Set<string>();
+  /** runtime → chats Orca offers to carry on after it restarted. */
+  private resumes = new Map<string, { list: Omit<Resumable, "agentId">[]; at: number }>();
   private heldRound = 0;
   private detecting = new Set<string>();
 
@@ -253,8 +280,13 @@ export class OrcaWatcher {
     if (this.polling.has(runtime)) return;
     this.polling.add(runtime);
     try {
-      const res = await this.rpc.call<any>(runtime, "worktree.ps", {});
-      this.states.set(runtime, { online: true, error: null, worktrees: res.worktrees ?? [], at: Date.now() });
+      // With the last snapshot id, Orca answers "unchanged" instead of the whole list when nothing
+      // moved (older hosts ignore it and send the list).
+      const prev = this.states.get(runtime);
+      const res = await this.rpc.call<any>(runtime, "worktree.ps", { afterSnapshotId: (prev?.online && prev.snapshotId) || null });
+      const worktrees = res?.unchanged === true && prev ? prev.worktrees : (res.worktrees ?? []);
+      this.states.set(runtime, { online: true, error: null, worktrees, at: Date.now(), snapshotId: typeof res?.snapshotId === "string" ? res.snapshotId : undefined });
+      void this.pollUsage(runtime);
     } catch (e) {
       const prev = this.states.get(runtime);
       const offline = e instanceof OrcaError && /runtime_unavailable|bridge|timeout|ECONN/i.test(e.code + e.message);
@@ -263,6 +295,83 @@ export class OrcaWatcher {
       this.polling.delete(runtime);
     }
     this.rebuild();
+  }
+
+  /**
+   * Usage limits, once a minute per host from Orca's cache; every 10 minutes Orca is asked to
+   * refresh figures that went stale. Warns once when a window climbs past 80% or 95%.
+   */
+  private async pollUsage(runtime: string) {
+    const now = Date.now();
+    const known = this.usage.get(runtime);
+    if (this.usageBusy.has(runtime) || (known && now - known.at < 60_000)) return;
+    this.usageBusy.add(runtime);
+    const refresh = !known || now - known.refreshedAt > 10 * 60_000;
+    try {
+      const res = await this.rpc.call<any>(runtime, "accounts.list", refresh ? { refreshUsage: false, refreshStaleUsage: true } : { refreshUsage: false }, 20_000);
+      const list = parseUsage(res);
+      const changed = JSON.stringify(list) !== JSON.stringify(known?.list ?? []);
+      this.usage.set(runtime, { list, at: Date.now(), refreshedAt: refresh ? Date.now() : known!.refreshedAt });
+      for (const w of usageWarnings(list, this.usageSeen)) {
+        const span = w.window === "session" ? "5-hour" : "weekly";
+        this.emit({ type: "activity", data: {
+          kind: "usage", agentId: "", workspace: this.hostName(runtime), at: Date.now(),
+          title: `${w.label} is at ${w.usedPercent}% of its ${span} limit`,
+          text: w.resets ? `Resets ${w.resets}` : `${w.label}'s ${span} usage`,
+        } });
+      }
+      if (changed) this.rebuild();
+    } catch {
+      this.usage.set(runtime, { list: known?.list ?? [], at: now, refreshedAt: known?.refreshedAt ?? 0 });
+    } finally {
+      this.usageBusy.delete(runtime);
+    }
+    await this.pollResumable(runtime);
+  }
+
+  /** Chats Orca stopped when it quit or updated: offered here so they can carry on. */
+  private async pollResumable(runtime: string) {
+    try {
+      const res = await this.rpc.call<any>(runtime, "agentSession.restartResumable", {}, 15_000, { caps: CHAT_CAPS });
+      const list = (Array.isArray(res?.sessions) ? res.sessions : []).map((r: any) => ({
+        sessionId: String(r.sessionId), agent: String(r.agent ?? "claude"), prompt: clip(oneLine(String(r.latestPrompt ?? "")), 160) ?? "",
+        trigger: String(r.trigger ?? "quit"), at: typeof r.recordedAt === "number" ? r.recordedAt : Date.now(),
+      }));
+      const before = this.resumes.get(runtime);
+      this.resumes.set(runtime, { list, at: Date.now() });
+      const fresh = list.filter((r: Resumable) => !before?.list.some((b) => b.sessionId === r.sessionId));
+      if (before && fresh.length) {
+        const why = fresh[0].trigger === "update" ? "Orca updated" : "Orca quit";
+        this.emit({ type: "activity", data: {
+          kind: "resumable", agentId: "", workspace: this.hostName(runtime), at: Date.now(),
+          title: `${fresh.length} chat${fresh.length > 1 ? "s" : ""} stopped when ${why}`,
+          text: fresh[0].prompt || "They can carry on where they were",
+        } });
+      }
+      if (JSON.stringify(list) !== JSON.stringify(before?.list ?? [])) this.rebuild();
+    } catch {
+      // older hosts have no chats to offer
+    }
+  }
+
+  /** Let chats Orca stopped carry on (all of a host's, or the ones named). */
+  async resume(hostId: string, sessionIds?: string[]): Promise<string> {
+    const runtime = this.environments.some((e) => e.id === hostId) ? hostId : LOCAL;
+    const res = await this.rpc.call<any>(runtime, "agentSession.restartContinue", sessionIds?.length ? { sessionIds } : {}, 30_000, { caps: CHAT_CAPS });
+    this.resumes.delete(runtime);
+    void this.pollResumable(runtime);
+    this.settle(runtime);
+    const n = Array.isArray(res?.results) ? res.results.length : sessionIds?.length ?? 0;
+    return n ? `carrying on with ${n} chat${n > 1 ? "s" : ""}` : "carrying on";
+  }
+
+  /** Forget the offer: the chats stay stopped. */
+  async dismissResume(hostId: string, sessionIds?: string[]): Promise<string> {
+    const runtime = this.environments.some((e) => e.id === hostId) ? hostId : LOCAL;
+    await this.rpc.call<any>(runtime, "agentSession.restartResumableDismiss", sessionIds?.length ? { sessionIds } : {}, 15_000, { caps: CHAT_CAPS });
+    this.resumes.set(runtime, { list: (this.resumes.get(runtime)?.list ?? []).filter((r) => sessionIds?.length && !sessionIds.includes(r.sessionId)), at: Date.now() });
+    this.rebuild();
+    return "dismissed";
   }
 
   private hostName(runtime: string): string {
@@ -337,6 +446,9 @@ export class OrcaWatcher {
     if (a.state === "waiting" || a.state === "blocked") attention = facet.kind ?? (a.toolName === "AskUserQuestion" ? "question" : "input");
     else if (facet.state === "blocked" && (a.state === "working" || seenSince)) attention = facet.kind ?? "input";
     if (!attention && this.held.has(id)) attention = "input"; // a held message Floe saw on the screen itself
+    // A chat tab's journal says what it's waiting on (its row only says "blocked").
+    const chat = attention ? this.chats.get(id)?.prompt : null;
+    if (chat) attention = chat.kind === "approval" ? "permission" : "question";
     const input = inputText(a.toolInput);
     const detail = attention && (!facet.message || GENERIC.test(facet.message)) ? (this.promptTitle(id) ?? facet.message ?? null)
       : attention && !live ? (facet.message ?? null) : live ? (facet.message ?? (a.toolName ? `${a.toolName}${input ? ": " + oneLine(firstLine(input) ?? "") : ""}` : null)) : null;
@@ -437,6 +549,11 @@ export class OrcaWatcher {
           projects: plist,
           counts: { working, attention, workspaces: rows.length, agents: agentCount },
           agents: (this.launchable.get(hid)?.agents ?? []).map(kind),
+          usage: ssh ? [] : (this.usage.get(runtime)?.list ?? []),
+          resumable: ssh ? [] : (this.resumes.get(runtime)?.list ?? []).map((r) => ({
+            ...r,
+            agentId: agents.find((a) => a.id.startsWith(`${runtime}|`) && chatSessionId(a.paneKey) === r.sessionId)?.id ?? null,
+          })),
         });
         if (ssh ? ssh.connected : st?.online) this.detectAgents(hid, runtime);
       }
@@ -517,6 +634,12 @@ export class OrcaWatcher {
 
   /** The first line of the prompt last read off this agent's screen ("Held message from another session"). */
   private promptTitle(id: string): string | null {
+    const chat = this.chats.get(id);
+    if (chat?.prompt && Date.now() - chat.at < 120_000) {
+      const p = chat.prompt;
+      const q = p.questions[Math.min(chat.draft?.at ?? 0, p.questions.length - 1)];
+      return clip(p.kind === "approval" ? `Allow ${p.title}?` : q?.question || p.title, 160) ?? null;
+    }
     const seen = this.screens.get(id);
     if (!seen || Date.now() - seen.at > 120_000 || !seen.view.options.length) return null;
     return clip(seen.view.lines.find((l) => l.trim())?.trim(), 160) ?? null;
@@ -571,7 +694,7 @@ export class OrcaWatcher {
     const round = ++this.heldRound;
     let changed = false;
     try {
-      const agents = this.snapshot.agents.filter((a) => /claude/.test(a.agentType) && (!a.attention || this.held.has(a.id)) && (a.state !== "working" || round % 3 === 0));
+      const agents = this.snapshot.agents.filter((a) => /claude/.test(a.agentType) && !chatSessionId(a.paneKey) && (!a.attention || this.held.has(a.id)) && (a.state !== "working" || round % 3 === 0));
       for (const a of agents) {
         let shows = false;
         try {
@@ -715,6 +838,8 @@ export class OrcaWatcher {
   }
 
   async screen(id: string): Promise<ScreenView & { handle: string }> {
+    const session = this.chatOf(id);
+    if (session) return this.chatScreen(id, session);
     let { runtime, handle } = await this.terminalFor(id);
     let res: any;
     try {
@@ -731,6 +856,73 @@ export class OrcaWatcher {
     if (a && !a.attention) view.options = [];
     this.screens.set(id, { view, at: Date.now() });
     return view;
+  }
+
+  // MARK: chat tabs
+
+  /** The chat session behind an agent, or null for a terminal agent. */
+  private chatOf(id: string): string | null {
+    const a = this.agent(id);
+    return chatSessionId(a?.paneKey ?? this.route(id).key);
+  }
+
+  /** A chat's journal tail: its prompt (if one is open), its fence, and recent turns. */
+  private async chatRead(id: string, session: string) {
+    const { runtime } = this.route(id);
+    const res = await this.rpc.call<any>(runtime, "agentSession.history", { sessionId: session, direction: "tail", limit: 40 }, 10_000, { caps: CHAT_CAPS });
+    if (res?.ok === false) throw new OrcaError(res.refusal?.message ?? "Orca wouldn't read that chat", res.refusal?.code ?? "chat_refused");
+    const page = res?.page ?? res;
+    const prompt = pendingPrompt(page);
+    const prev = this.chats.get(id);
+    const draft = prompt ? freshDraft(prompt, prev?.draft) : null;
+    const st = { prompt, fence: typeof page?.fence === "number" ? page.fence : null, draft, at: Date.now() };
+    this.chats.set(id, st);
+    return { ...st, page };
+  }
+
+  private async chatScreen(id: string, session: string): Promise<ScreenView & { handle: string }> {
+    const { prompt, draft, page } = await this.chatRead(id, session);
+    const view = prompt && draft ? { handle: session, ...chatView(prompt, draft) } : { handle: session, lines: transcript(page), options: [], numbered: true };
+    this.screens.set(id, { view, at: Date.now() });
+    return view;
+  }
+
+  /** Answer a chat's prompt through Orca's own calls, or send it a follow-up message. */
+  private async chatAnswer(id: string, session: string, body: { option?: number; text?: string; step?: "next" | "back" }): Promise<string> {
+    const { runtime } = this.route(id);
+    const recent = this.chats.get(id);
+    const st = recent && recent.prompt && Date.now() - recent.at < 8000 ? recent : await this.chatRead(id, session);
+    if (!st.prompt || !st.draft) {
+      // Nothing open: a follow-up message (queued if the agent is mid-turn).
+      const text = body.text?.trim();
+      if (!text) throw new OrcaError(body.option !== undefined ? "That question was already answered" : "Nothing to send", body.option !== undefined ? "stale_menu" : "invalid_argument");
+      const req = sendRequest(session, st.fence, text);
+      const res = await this.rpc.call<any>(runtime, req.method, req.params, 20_000, { caps: CHAT_CAPS });
+      if (res?.ok === false) throw new OrcaError(res.refusal?.message ?? "Orca didn't take the message", res.refusal?.code ?? "chat_refused");
+      this.settle(runtime);
+      return "sent";
+    }
+    let step;
+    try {
+      step = applyChatInput(st.prompt, st.draft, body);
+    } catch (e) {
+      if (e instanceof ChatInputError) throw new OrcaError(e.message, e.code);
+      throw e;
+    }
+    this.chats.set(id, { ...st, draft: step.draft, at: Date.now() });
+    this.screens.delete(id);
+    if (!step.submit) return step.said;
+    const req = respondRequest(session, st.fence, st.prompt, step.submit);
+    const res = await this.rpc.call<any>(runtime, req.method, req.params, 20_000, { caps: CHAT_CAPS });
+    if (res?.ok === false) {
+      this.chats.delete(id);
+      const r = res.refusal ?? {};
+      if (/already_resolved|revision_stale|not_pending|not_found/.test(r.code ?? "")) throw new OrcaError("That prompt was already answered", "stale_menu");
+      throw new OrcaError(r.message ?? "Orca didn't take the answer", r.code ?? "chat_refused");
+    }
+    this.chats.delete(id);
+    this.settle(runtime);
+    return step.said;
   }
 
   /** Raw keystrokes (menu digits, typed answers, Enter) go straight over RPC: no CLI spawn. */
@@ -759,6 +951,8 @@ export class OrcaWatcher {
 
   /** Answer a menu option, step between questions, type a free-text answer, or send a follow-up prompt. */
   async answer(id: string, body: { option?: number; text?: string; step?: "next" | "back" }): Promise<string> {
+    const session = this.chatOf(id);
+    if (session) return this.chatAnswer(id, session, body);
     const { runtime } = this.route(id);
     const harness = this.agent(id)?.agentType ?? "";
     // The island just showed this screen; reuse it if it's fresh instead of reading again.
@@ -865,6 +1059,14 @@ export class OrcaWatcher {
   }
 
   async focus(id: string) {
+    const session = this.chatOf(id);
+    if (session) {
+      const { runtime } = this.route(id);
+      const res = await this.rpc.call<any>(runtime, "agentSession.reveal", { sessionId: session }, 15_000, { caps: CHAT_CAPS });
+      if (res?.ok === false) throw new OrcaError(res.refusal?.message ?? "Orca couldn't open that chat", res.refusal?.code ?? "chat_refused");
+      openOrca(this.cfg.orcaUserData, this.cfg.orcaApp);
+      return;
+    }
     const { runtime, handle } = await this.terminalFor(id);
     await this.rpc.cli(runtime, ["terminal", "switch", "--terminal", handle]);
     openOrca(this.cfg.orcaUserData, this.cfg.orcaApp);
@@ -875,15 +1077,8 @@ export class OrcaWatcher {
     const { runtime, key: worktreeId } = this.route(workspaceKey);
     const args = ["agent", "launch", "--agent", agent, "--worktree", `id:${worktreeId}`];
     if (prompt?.trim()) args.push("--prompt", prompt.trim());
-    // In a terminal, whatever Orca's Chat | CLI setting says: Floe reads an agent's questions off its
-    // terminal and answers them with keys, and a chat tab has neither. (Older Orca: no flag.)
-    let res: any;
-    try {
-      res = await this.rpc.cli<any>(runtime, [...args, "--surface", "terminal"], 60_000);
-    } catch (e) {
-      if (!/surface|unknown (option|flag|argument)|unrecognized/i.test((e as Error).message)) throw e;
-      res = await this.rpc.cli<any>(runtime, args, 60_000);
-    }
+    // As a chat or in a terminal, as your Orca "Chat | CLI" setting says: Floe answers both.
+    const res = await this.rpc.cli<any>(runtime, args, 60_000);
     setTimeout(() => this.pollHost(runtime), 800);
     return res?.receipt?.detail ?? `started ${agent}`;
   }

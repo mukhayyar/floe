@@ -14,19 +14,21 @@ import {
   kindName,
   liveAgents,
   promptLines,
+  resumeChats,
   screens,
   select,
   snapshot,
   step,
   target,
 } from "../store";
-import type { Agent, ScreenView } from "../types";
+import type { Agent, HostView, ScreenView } from "../types";
 import { ActionButton, Md, MoodIndicator, Spinner } from "./parts";
 import { StepTimeline } from "./timeline";
 
 export function LiveView() {
   const live = liveAgents.value;
-  if (!live.length) {
+  const stopped = hosts.value.filter((h) => h.resumable?.length);
+  if (!live.length && !stopped.length) {
     const s = snapshot.value;
     return (
       <div class="empty">
@@ -42,9 +44,40 @@ export function LiveView() {
   }
   return (
     <div class="scroll pad">
+      {stopped.map((h) => (
+        <ResumeBanner key={h.id} host={h} />
+      ))}
       {live.map((a) => (
         <AgentCard key={a.id} agent={a} />
       ))}
+    </div>
+  );
+}
+
+/** Chats Orca stopped when it quit or updated: carry on, or leave them. */
+function ResumeBanner({ host: h }: { host: HostView }) {
+  const list = h.resumable ?? [];
+  const why = list[0]?.trigger === "update" ? "Orca updated" : "Orca quit";
+  return (
+    <div class="card resume-banner">
+      <div class="row gap7">
+        <span style={{ color: "var(--orange)" }}>
+          <Icon name="alert" size={12} />
+        </span>
+        <b class="small-text">
+          {list.length} chat{list.length === 1 ? "" : "s"} stopped when {why}
+          {h.kind === "local" ? "" : ` on ${h.name}`}
+        </b>
+      </div>
+      {list.slice(0, 3).map((r) => (
+        <div key={r.sessionId} class="dim small-text one">
+          “{r.prompt}”
+        </div>
+      ))}
+      <div class="row gap6">
+        <ActionButton title="Carry on" icon="send" prominent onClick={() => resumeChats(h.id)} />
+        <ActionButton title="Dismiss" icon="x" onClick={() => resumeChats(h.id, true)} />
+      </div>
     </div>
   );
 }
