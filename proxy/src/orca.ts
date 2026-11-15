@@ -559,6 +559,7 @@ export class OrcaWatcher {
       }
     }
     for (const id of [...this.trails.keys()]) if (!seen.has(id)) this.trails.delete(id);
+    for (const id of [...this.chats.keys()]) if (!seen.has(id)) this.chats.delete(id);
 
     const order = (h: HostView) => (h.kind === "local" ? 0 : h.kind === "environment" ? 1 : h.online ? 2 : 3);
     hosts.sort((a, b) => order(a) - order(b) || b.counts.agents - a.counts.agents || a.name.localeCompare(b.name));
